@@ -1,22 +1,21 @@
 package main
 
 import (
-	"fmt"
 	"github.com/spf13/cobra"
-	"log"
 	"os"
 	"s3copy/copier"
+	"s3copy/utils"
 )
 
 var (
-	fromFile     string
-	fromURL      string
-	fromS3       string
-	to           string
-	concurrent   int
-	partSize     int64
-	resumeFile   string
-	skipExisting bool
+	fromFile   string
+	fromURL    string
+	fromS3     string
+	to         string
+	concurrent int
+	partSize   int64
+
+	logger = utils.GetLogger("s3copy")
 )
 
 func main() {
@@ -39,15 +38,12 @@ Environment Variables:
 	rootCmd.Flags().StringVar(&fromURL, "from-url", "", "Copy from HTTP/HTTPS URL")
 	rootCmd.Flags().StringVar(&fromS3, "from-s3", "", "Copy from S3 bucket (http://bucket.endpoint or http://endpoint/bucket)")
 	rootCmd.Flags().StringVar(&to, "to", "", "Destination S3 endpoint (required)")
-	rootCmd.Flags().IntVar(&concurrent, "concurrent", 10, "Number of concurrent uploads")
+	rootCmd.Flags().IntVar(&concurrent, "T", 10, "Number of concurrent uploads")
 	rootCmd.Flags().Int64Var(&partSize, "part-size", 32*1024*1024, "Part size for multipart upload (bytes)")
-	rootCmd.Flags().StringVar(&resumeFile, "resume-file", ".s3copy-resume.json", "Resume file path")
-	rootCmd.Flags().BoolVar(&skipExisting, "skip-existing", true, "Skip files that already exist (ETag check)")
-
 	rootCmd.MarkFlagRequired("to")
 
 	if err := rootCmd.Execute(); err != nil {
-		log.Fatal(err)
+		logger.Fatal(err)
 	}
 }
 
@@ -73,16 +69,16 @@ func runS3Copy(cmd *cobra.Command, args []string) {
 	}
 
 	if sourceCount == 0 {
-		fmt.Println("Error: Must specify one of --from-file, --from-url, or --from-s3")
+		logger.Errorf("error: must specify one of --from-file, --from-url, or --from-s3")
 		os.Exit(1)
 	}
 	if sourceCount > 1 {
-		fmt.Println("Error: Can only specify one source type")
+		logger.Errorf("error: can only specify one source type")
 		os.Exit(1)
 	}
 
 	if to == "" {
-		fmt.Println("Error: --to is required")
+		logger.Errorf("error: --to is required")
 		os.Exit(1)
 	}
 
@@ -97,12 +93,12 @@ func runS3Copy(cmd *cobra.Command, args []string) {
 
 	copier, err := copier.NewCopier(&copyOpt)
 	if err != nil {
-		log.Fatal("new copier failed: ", err)
+		logger.Fatalf("new copier failed: %v", err)
 	}
 
 	err = copier.Copy()
 	if err != nil {
-		log.Fatal("copy failed: ", err)
+		logger.Fatalf("copy failed: %v", err)
 	}
 
 }

@@ -2,6 +2,7 @@ package filesource
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -19,6 +20,11 @@ type FileSource struct {
 
 // NewFileSource 创建一个新的 FileSource 实例
 func NewFileSource(source string) (*FileSource, error) {
+	// 如果文件不存在，返回错误
+	if _, err := os.Lstat(source); err != nil {
+		return nil, fmt.Errorf("file source %q already exists", source)
+	}
+
 	return &FileSource{fs: afero.NewOsFs(), path: source}, nil
 }
 
@@ -31,9 +37,15 @@ func (s *FileSource) List(ctx context.Context, recursive bool) (<-chan ObjectInf
 		defer close(errCh)
 
 		// 检查路径是否存在
-		info, err := s.fs.Stat(s.path)
+		info, err := os.Lstat(s.path)
 		if err != nil {
+			logger.Errorf("failed to stat path %s: %v", s.path, err)
 			errCh <- err
+			return
+		}
+		logger.Infof("lstat %s mode: %v, isSymlink: %v", s.path, info.Mode(), info.Mode()&os.ModeSymlink != 0)
+		if info.Mode()&os.ModeSymlink != 0 {
+			logger.Infof("lstat %s is %v", s.path, info)
 			return
 		}
 
@@ -55,6 +67,7 @@ func (s *FileSource) List(ctx context.Context, recursive bool) (<-chan ObjectInf
 		// 遍历目录
 		walkFn := func(filePath string, info os.FileInfo, err error) error {
 			if err != nil {
+				logger.Errorf("failed to open file %s: %v", filePath, err)
 				return err
 			}
 
@@ -62,7 +75,10 @@ func (s *FileSource) List(ctx context.Context, recursive bool) (<-chan ObjectInf
 			if filePath == s.path {
 				return nil
 			}
-
+			info, err = os.Lstat(filePath)
+			if err != nil || (info.Mode()&os.ModeSymlink != 0) {
+				return nil
+			}
 			// 非递归模式跳过子目录
 			if !recursive && info.IsDir() {
 				return filepath.SkipDir
@@ -108,6 +124,7 @@ func (s *FileSource) Read(ctx context.Context, path string, offset int64) (io.Re
 	info, err := file.Stat()
 	if err != nil {
 		file.Close()
+		logger.Errorf("failed to stat file %s: %v", path, err)
 		return nil, 0, err
 	}
 
@@ -118,6 +135,7 @@ func (s *FileSource) Read(ctx context.Context, path string, offset int64) (io.Re
 	if offset > 0 {
 		if _, err := file.Seek(offset, io.SeekStart); err != nil {
 			file.Close()
+			logger.Errorf("failed to seek file %s: %v", path, err)
 			return nil, 0, err
 		}
 	}
@@ -135,6 +153,7 @@ func (s *FileSource) Read(ctx context.Context, path string, offset int64) (io.Re
 func (s *FileSource) GetMetadata(_ context.Context, path string) (map[string]string, error) {
 	info, err := s.fs.Stat(path)
 	if err != nil {
+		logger.Errorf("failed to stat file %s: %v", path, err)
 		return nil, err
 	}
 

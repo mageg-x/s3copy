@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"strconv"
 	"strings"
 
@@ -24,7 +23,7 @@ type S3Source struct {
 func NewS3Source(source string) (*S3Source, error) {
 	config, err := ParseEndpoint(source, false)
 	if err != nil {
-		log.Fatalf("Failed to parse source endpoint: %v", err)
+		logger.Fatalf("failed to parse source endpoint: %v", err)
 	}
 
 	// 创建 AWS 会话
@@ -41,6 +40,14 @@ func NewS3Source(source string) (*S3Source, error) {
 
 	// 创建 S3 客户端
 	s3Client := s3.New(sess)
+
+	// 测试数据源是否可达
+	_, err = s3Client.HeadBucketWithContext(context.Background(), &s3.HeadBucketInput{
+		Bucket: aws.String(config.Bucket),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("source bucket not exist: %w", err)
+	}
 
 	return &S3Source{
 		config:   config,
@@ -145,6 +152,7 @@ func (s *S3Source) Read(ctx context.Context, path string, offset int64) (io.Read
 		Key:    params.Key,
 	})
 	if err != nil {
+		logger.Errorf("failed to head s3 object: %v", err)
 		return nil, 0, err
 	}
 	fullSize := *headResp.ContentLength
@@ -158,6 +166,7 @@ func (s *S3Source) Read(ctx context.Context, path string, offset int64) (io.Read
 	// 获取对象（流式）
 	resp, err := s.s3Client.GetObjectWithContext(ctx, params)
 	if err != nil {
+		logger.Errorf("failed to get s3 object: %v", err)
 		return nil, 0, err
 	}
 
@@ -181,6 +190,7 @@ func (s *S3Source) GetMetadata(ctx context.Context, path string) (map[string]str
 	// 获取元数据
 	resp, err := s.s3Client.HeadObjectWithContext(ctx, params)
 	if err != nil {
+		logger.Errorf("failed to head s3 object for metadata: %v", err)
 		return nil, err
 	}
 

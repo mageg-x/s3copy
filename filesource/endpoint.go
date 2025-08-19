@@ -29,6 +29,7 @@ func ParseEndpoint(endpoint string, isDest bool) (*EndpointConfig, error) {
 
 	u, err := url.Parse(endpoint)
 	if err != nil {
+		logger.Errorf("failed to parse endpoint: %v", err)
 		return nil, fmt.Errorf("invalid endpoint URL: %w", err)
 	}
 
@@ -46,6 +47,7 @@ func ParseEndpoint(endpoint string, isDest bool) (*EndpointConfig, error) {
 	}
 
 	if config.AccessKey == "" || config.SecretKey == "" {
+		logger.Errorf("failed to parse endpoint URL")
 		return nil, fmt.Errorf("missing ak/sk in environment variables")
 	}
 
@@ -79,10 +81,12 @@ func isValidVirtualHost(host string) bool {
 	// Check for valid domain structure (avoid over-splitting IP-like formats)
 	parts := strings.Split(host, ".")
 	if len(parts) < 2 {
+		logger.Errorf("invalid virtual host")
 		return false
 	}
 	// Last part should be TLD (at least 2 characters)
 	if len(parts[len(parts)-1]) < 2 {
+		logger.Errorf("invalid virtual host")
 		return false
 	}
 	return true
@@ -95,6 +99,7 @@ func parsePathStyle(u *url.URL, config *EndpointConfig) (*EndpointConfig, error)
 	// Trim leading/trailing slashes and split path
 	trimmedPath := strings.Trim(u.Path, "/")
 	if trimmedPath == "" {
+		logger.Errorf("invalid path style")
 		return nil, fmt.Errorf("bucket not found in path for endpoint: %s", u.String())
 	}
 

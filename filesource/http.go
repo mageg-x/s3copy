@@ -35,6 +35,7 @@ func (s *URLSource) List(ctx context.Context, recursive bool) (<-chan ObjectInfo
 		// 打开URL文件
 		file, err := os.Open(s.path)
 		if err != nil {
+			logger.Errorf("failed to open url file: %v", err)
 			errChan <- fmt.Errorf("failed to open URL file: %w", err)
 			return
 		}
@@ -69,6 +70,7 @@ func (s *URLSource) List(ctx context.Context, recursive bool) (<-chan ObjectInfo
 		}
 
 		if err := scanner.Err(); err != nil {
+			logger.Errorf("error reading url file at line %d: %v", lineNum, err)
 			errChan <- fmt.Errorf("error reading URL file at line %d: %w", lineNum, err)
 		}
 	}()
@@ -81,6 +83,7 @@ func (s *URLSource) Read(ctx context.Context, path string, offset int64) (io.Rea
 	// 创建请求
 	req, err := http.NewRequestWithContext(ctx, "GET", path, nil)
 	if err != nil {
+		logger.Errorf("failed to create http request: %v", err)
 		return nil, 0, err
 	}
 
@@ -92,12 +95,14 @@ func (s *URLSource) Read(ctx context.Context, path string, offset int64) (io.Rea
 	// 发送请求
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
+		logger.Errorf("failed to send http request: %v", err)
 		return nil, 0, err
 	}
 
 	// 检查响应状态码
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		resp.Body.Close()
+		logger.Errorf("http request failed with status: %s", resp.Status)
 		return nil, 0, fmt.Errorf("HTTP request failed with status: %s", resp.Status)
 	}
 
@@ -120,23 +125,34 @@ func (s *URLSource) Read(ctx context.Context, path string, offset int64) (io.Rea
 	return resp.Body, fileSize, nil
 }
 
-// GetMetadata 获取 URL 的元数据
 func (s *URLSource) GetMetadata(ctx context.Context, path string) (map[string]string, error) {
+	metadata, err := s.GetMetadataByHead(ctx, path)
+	if err != nil {
+		return s.GetMetadataByGet(ctx, path)
+	}
+	return metadata, nil
+}
+
+// GetMetadataByHead 获取 URL 的元数据
+func (s *URLSource) GetMetadataByHead(ctx context.Context, path string) (map[string]string, error) {
 	// 创建 HEAD 请求
 	req, err := http.NewRequestWithContext(ctx, "HEAD", path, nil)
 	if err != nil {
+		logger.Errorf("failed to create http head request: %v", err)
 		return nil, err
 	}
 
 	// 发送请求
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
+		logger.Errorf("failed to send http head request: %v", err)
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	// 检查响应状态码
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		logger.Errorf("http head request failed with status: %s", resp.Status)
 		return nil, fmt.Errorf("HTTP HEAD request failed with status: %s", resp.Status)
 	}
 
@@ -164,5 +180,65 @@ func (s *URLSource) GetMetadata(ctx context.Context, path string) (map[string]st
 		metadata["last_modified"] = lastModified
 	}
 
+	return metadata, nil
+}
+
+// 获取文件总大小
+func (s *URLSource) GetMetadataByGet(ctx context.Context, path string) (map[string]string, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", path, nil)
+	if err != nil {
+		logger.Errorf("failed to create request for %s: %v\n", path, err)
+		return nil, err
+	}
+
+	req.Header.Set("Range", "bytes=0-100") // 请求前100字节用于获取文件总大小
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		logger.Errorf("request failed for %s: %v\n", path, err)
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+		errMsg := fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+		logger.Errorf("initial request failed with status %d: %v\n", resp.StatusCode, errMsg)
+		return nil, errMsg
+	}
+
+	contentRange := resp.Header.Get("Content-Range")
+	if contentRange == "" {
+		errMsg := fmt.Errorf("content-range header missing for %s", path)
+		logger.Errorf("%v\n", errMsg)
+		return nil, errMsg
+	}
+
+	// 解析 Content-Range: bytes 0-1024/123456789
+	parts := strings.Split(contentRange, "/")
+	if len(parts) < 2 {
+		errMsg := fmt.Errorf("invalid content-range format: %s", contentRange)
+		logger.Errorf("%v\n", errMsg)
+		return nil, errMsg
+	}
+
+	var fileSize int64
+	_, err = fmt.Sscanf(parts[1], "%d", &fileSize)
+	if err != nil {
+		logger.Errorf("failed to parse file size from content-range: %v\n", err)
+		return nil, err
+	}
+	// 提取 ETag 和 Last-Modified（即使为空也返回）
+	etag := resp.Header.Get("ETag")
+	lastModified := resp.Header.Get("Last-Modified")
+
+	// 提取元数据
+	metadata := make(map[string]string)
+	metadata["is_dir"] = "false"
+	metadata["size"] = strconv.FormatInt(fileSize, 10)
+	metadata["etag"] = etag
+	metadata["last_modified"] = lastModified
+
+	logger.Infof("get file %s meta info %v", path, metadata)
 	return metadata, nil
 }

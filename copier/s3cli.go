@@ -1,4 +1,4 @@
-package utils
+package copier
 
 import (
 	"bytes"
@@ -7,8 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 	"io"
-	"log"
 	"math"
 	"sort"
 	"strconv"
@@ -39,10 +39,6 @@ type RetData struct {
 
 // ProgressCallback 是上传进度回调函数类型
 type UlProgressCb func(partNumber int32, totalParts int32, uploadedBytes int64, totalBytes int64)
-
-var (
-	logger = GetLogger("s3copy")
-)
 
 type S3Cli struct {
 	cfg        *source.EndpointConfig
@@ -77,16 +73,13 @@ func Create(config *source.EndpointConfig, maxRetries, partSize, concurrent int)
 }
 
 func (s *S3Cli) IsObjectExist(ctx context.Context, objectPath string, srcEtag string) (bool, string, error) {
-	// 创建带超时的子 context（可选）
-	t, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
 
-	head, err := s.s3Client.HeadObjectWithContext(t, &s3.HeadObjectInput{
+	head, err := s.s3Client.HeadObjectWithContext(ctx, &s3.HeadObjectInput{
 		Bucket: aws.String(s.cfg.Bucket),
 		Key:    aws.String(objectPath),
 	})
 	if err != nil {
-		log.Printf("failed to check if object exists: %v", err)
+		logger.Infof("failed to check if object exists: %v", err)
 		return false, "", fmt.Errorf("failed to check if object exists: %w", err)
 	}
 
@@ -96,16 +89,16 @@ func (s *S3Cli) IsObjectExist(ctx context.Context, objectPath string, srcEtag st
 		dstEtag = *head.ETag
 	}
 	if strings.Trim(srcEtag, `"`) == strings.Trim(dstEtag, `"`) {
-		log.Printf("Object %s already exists with matching ETag (%s), skipping upload",
-			objectPath, srcEtag)
+		logger.Infof("object %s already exists with matching etag (%s), skipping upload", objectPath, dstEtag)
 		return true, dstEtag, nil
 	}
-	log.Printf("etag %s not matching ETag (%s)", srcEtag, head)
+	logger.Infof("etag %s not matching etag (%s)", srcEtag, head)
 	return false, dstEtag, errors.New("etag not match")
 }
 
 // uploadSimple 执行简单上传
-func (s *S3Cli) UploadObject(ctx context.Context, objectPath string, data io.ReadCloser, srcmeta map[string]string) error {
+func (s *S3Cli) UploadObject(ctx context.Context, objectPath string, reader io.ReadCloser, srcmeta map[string]string) error {
+	defer reader.Close()
 	var srcEtag, dstEtag string
 	if srcmeta != nil {
 		srcEtag = srcmeta["etag"]
@@ -120,8 +113,9 @@ func (s *S3Cli) UploadObject(ctx context.Context, objectPath string, data io.Rea
 	}
 
 	// 将流式数据读入内存
-	buf, err := io.ReadAll(data)
+	buf, err := io.ReadAll(reader)
 	if err != nil {
+		logger.Errorf("failed to read object %s: %v", objectPath, err)
 		return fmt.Errorf("failed to read data from source: %w", err)
 	}
 
@@ -133,7 +127,10 @@ func (s *S3Cli) UploadObject(ctx context.Context, objectPath string, data io.Rea
 	if len(srcEtag) > 0 && len(dstEtag) > 0 && strings.Trim(srcEtag, `"`) == strings.Trim(dstEtag, `"`) {
 		return nil
 	}
-	exist, dstEtag, err := s.IsObjectExist(ctx, objectPath, srcEtag)
+	t, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
+
+	exist, dstEtag, err := s.IsObjectExist(t, objectPath, srcEtag)
 	if err == nil && exist {
 		return nil
 	}
@@ -152,12 +149,11 @@ func (s *S3Cli) UploadObject(ctx context.Context, objectPath string, data io.Rea
 		}
 		params.Metadata = metadataMap
 	}
-	// 创建带超时的子 context（可选）
-	t, cancel := context.WithTimeout(ctx, 300*time.Second)
-	defer cancel()
+
 	// 执行上传
 	_, err = s.s3Client.PutObjectWithContext(t, params)
 	if err != nil {
+		logger.Errorf("failed to upload object %s: %v", objectPath, err)
 		return fmt.Errorf("failed to upload object %s: %w", objectPath, err)
 	}
 
@@ -165,7 +161,8 @@ func (s *S3Cli) UploadObject(ctx context.Context, objectPath string, data io.Rea
 }
 
 // UploadMultipart 上传文件到 S3，使用分片并行上传方式，并支持快速失败。
-func (s *S3Cli) UploadMultipart(ctx context.Context, objectPath string, data io.ReadCloser, srcmeta map[string]string) error {
+func (s *S3Cli) UploadMultipart(ctx context.Context, objectPath string, reader io.ReadCloser, srcmeta map[string]string) error {
+	defer reader.Close()
 	// 1. 解析源文件大小
 	srcSizeStr, ok := srcmeta["size"]
 	if !ok {
@@ -177,18 +174,26 @@ func (s *S3Cli) UploadMultipart(ctx context.Context, objectPath string, data io.
 	}
 
 	// 2. 动态设置超时（基于文件大小），至少60秒
-	calculatedTimeoutSeconds := int(math.Max(float64(srcSize/(1024*1024)), 1)) * 60
+	calculatedTimeoutSeconds := int(math.Max(float64(srcSize/(1024*1024)), 1)) * 10
 	timeout := time.Duration(calculatedTimeoutSeconds) * time.Second
 	if timeout < 60*time.Second {
 		timeout = 60 * time.Second
 	}
-	uploadCtx, cancelUploadCtx := context.WithTimeout(ctx, timeout)
-	defer cancelUploadCtx()
+
+	uploadCtx, uploadCancel := context.WithTimeout(ctx, timeout)
+	defer uploadCancel()
 
 	logger.Infof("Starting multipart upload for %s with timeout %v", objectPath, timeout)
 
 	// 3. 检查目标对象是否存在且大小匹配 (简化)
-	// ... (检查逻辑保持不变)
+	head, err := s.s3Client.HeadObjectWithContext(uploadCtx, &s3.HeadObjectInput{
+		Bucket: aws.String(s.cfg.Bucket),
+		Key:    aws.String(objectPath),
+	})
+	if err == nil && head != nil && head.ContentLength != nil && *head.ContentLength == srcSize {
+		logger.Infof("the object %s skip because it exist", objectPath)
+		return nil // 大小匹配，跳过上传
+	}
 
 	// 4. 初始化分片上传
 	uploadID, initErr := s.InitPart(uploadCtx, s.cfg.Bucket, objectPath)
@@ -222,19 +227,8 @@ func (s *S3Cli) UploadMultipart(ctx context.Context, objectPath string, data io.
 	}
 	logger.Infof("Preparing to upload %s (%d bytes), part size %d, concurrency %d", objectPath, srcSize, partSize, maxConcurrency)
 
-	partETags := make([]*s3.CompletedPart, 0)
-
-	// --- 设置 Channel (生产者-消费者模型) ---
-	pubChan := make(chan PubData, maxConcurrency*2) // 缓冲 channel
-	retChan := make(chan RetData, maxConcurrency*2) // 结果 channel
-
-	// --- 7. 创建用于快速失败的上下文 ---
-	// workCtx 用于控制所有 worker 的生命周期
-	// 一旦发生错误，调用 workCancel 会取消 workCtx，进而取消所有派生的上下文
-	workCtx, workCancel := context.WithCancel(uploadCtx)
-	defer workCancel() // 确保函数退出时取消，防止泄露
-
 	// --- 8. 启动生产者 Goroutine (读取数据) ---
+	pubChan := make(chan PubData, maxConcurrency*2) // 缓冲 channel
 	go func() {
 		defer close(pubChan) // 读取完成后关闭 channel
 		partNum := int64(1)
@@ -243,16 +237,12 @@ func (s *S3Cli) UploadMultipart(ctx context.Context, objectPath string, data io.
 			select {
 			case <-uploadCtx.Done():
 				logger.Errorf("Upload context cancelled during reading: %v", uploadCtx.Err())
-				workCancel() // 确保取消被触发
 				return
-			case <-workCtx.Done():
-				logger.Errorf("Work context cancelled during reading: %v", workCtx.Err())
-				return // 如果已被取消，则直接退出
 			default:
 			}
 
 			buffer := make([]byte, partSize)
-			n, readErr := io.ReadFull(data, buffer)
+			n, readErr := io.ReadFull(reader, buffer)
 
 			if n > 0 {
 				pubChan <- PubData{
@@ -270,17 +260,16 @@ func (s *S3Cli) UploadMultipart(ctx context.Context, objectPath string, data io.
 				} else {
 					logger.Errorf("Error reading data: %v", readErr)
 					// --- 关键修改：遇到读取错误立即取消所有工作 ---
-					workCancel() // 触发快速失败
-					return       // 生产者 goroutine 退出
+					uploadCancel() // 触发快速失败
+					return         // 生产者 goroutine 退出
 				}
 			}
 		}
 	}()
 
-	// --- 9. 启动消费者 Worker Pool (并发上传) ---
+	// --- 9. 启动消费者协程 ---
 	var wg sync.WaitGroup
-	limiter := make(chan struct{}, maxConcurrency) // 信号量
-
+	retChan := make(chan RetData, maxConcurrency*2) // 结果 channel
 	// 启动固定数量的 worker
 	for i := 0; i < maxConcurrency; i++ {
 		wg.Add(1)
@@ -290,71 +279,37 @@ func (s *S3Cli) UploadMultipart(ctx context.Context, objectPath string, data io.
 			for part := range pubChan { // 从 channel 读取任务
 				// 检查上下文是否已取消，即使在等待 channel 时
 				select {
-				case <-workCtx.Done():
+				case <-uploadCtx.Done():
 					logger.Infof("Worker %d: Work context cancelled, exiting.", workerID)
 					return // 如果上下文已取消，worker 退出
 				default:
 				}
 
-				if part.ReadError != nil {
-					// 理论上不会到达这里，因为生产者在读取错误时已经取消了上下文
-					// 但为了健壮性，我们仍然处理它
-					retChan <- RetData{PartNumber: 0, ETag: "", Error: part.ReadError}
-					workCancel() // 再次触发取消（冗余但安全）
-					return
-				}
-
-				// 为每个 UploadPart 调用创建一个带超时的上下文
-				partCtx, partCancel := context.WithTimeout(workCtx, 30*time.Second)
-
-				limiter <- struct{}{} // 获取令牌
 				// 执行上传重试逻辑
 				var etag string
 				var uploadPartErr error
 				for attempt := 0; attempt < s.MaxRetries; attempt++ {
-					// 检查 partCtx 是否已取消（例如，由于快速失败）
-					select {
-					case <-partCtx.Done():
-						uploadPartErr = partCtx.Err()
-						logger.Errorf("Worker %d: Part context cancelled before attempt %d for part %d: %v", workerID, attempt+1, part.PartNumber, uploadPartErr)
-						break // 跳出重试循环
-					default:
-					}
-
 					// 使用 partCtx，它会响应 workCtx 的取消
-					etag, uploadPartErr = s.UploadPart(partCtx, s.cfg.Bucket, objectPath, uploadID, part.PartNumber, part.Data)
+					etag, uploadPartErr = s.UploadPart(uploadCtx, s.cfg.Bucket, objectPath, uploadID, part.PartNumber, part.Data)
 					if uploadPartErr == nil {
 						logger.Infof("Worker %d: successfully uploaded part %d (%d bytes)", workerID, part.PartNumber, len(part.Data))
 						break
 					}
 					logger.Errorf("Worker %d: Failed to upload part %d (attempt %d/%d): %v", workerID, part.PartNumber, attempt+1, s.MaxRetries, uploadPartErr)
-
-					// 在重试前检查上下文是否已取消
-					select {
-					case <-partCtx.Done():
-						uploadPartErr = partCtx.Err()
-						logger.Errorf("Worker %d: Context cancelled during retries for part %d: %v", workerID, part.PartNumber, uploadPartErr)
-						break // 跳出重试循环
-					case <-time.After(2 * time.Second):
-						// 等待后重试
-					}
-				}
-				partCancel() // 释放 partCtx
-				<-limiter    // 释放令牌
-
-				// 将结果发送回主 goroutine
-				retChan <- RetData{
-					PartNumber: part.PartNumber,
-					ETag:       etag,
-					Error:      uploadPartErr,
+					time.Sleep(3 * time.Second)
 				}
 
 				// --- 关键：如果上传失败，立即取消所有工作 ---
 				if uploadPartErr != nil {
 					logger.Errorf("Worker %d: Failing fast due to error in part %d", workerID, part.PartNumber)
-					workCancel() // 触发取消
-					// 注意：不要在这里 return，让 for range 循环自然结束
-					// 因为 channel 可能还有其他任务，我们需要让它们也感知到取消
+					uploadCancel() // 触发取消
+				} else {
+					// 将结果发送回主 goroutine
+					retChan <- RetData{
+						PartNumber: part.PartNumber,
+						ETag:       etag,
+						Error:      nil,
+					}
 				}
 			}
 			logger.Infof("Upload worker %d finished", workerID)
@@ -368,32 +323,17 @@ func (s *S3Cli) UploadMultipart(ctx context.Context, objectPath string, data io.
 	}()
 
 	// --- 11. 收集并处理上传结果 (在主 Goroutine 中) ---
-	var finalError error
+	partETags := make([]*s3.CompletedPart, 0)
 	for ret := range retChan {
-		if ret.Error != nil {
-			logger.Errorf("Upload failed for part %d: %v", ret.PartNumber, ret.Error)
-			if finalError == nil {
-				finalError = fmt.Errorf("upload failed for part %d: %w", ret.PartNumber, ret.Error)
-				// 一旦发现第一个错误，立即调用取消，加速失败过程
-				// (虽然生产者/worker 内部已经调用了，但这里再调用一次更保险)
-				workCancel()
-			}
-			// 继续读取 retChan 直到它被关闭，以防止 goroutine 泄露
-		} else {
-			partETags = append(partETags, &s3.CompletedPart{
-				ETag:       aws.String(ret.ETag),
-				PartNumber: aws.Int64(ret.PartNumber),
-			})
-		}
+		partETags = append(partETags, &s3.CompletedPart{
+			ETag:       aws.String(ret.ETag),
+			PartNumber: aws.Int64(ret.PartNumber),
+		})
 	}
 
-	// --- 12. 检查最终状态 ---
-	if finalError != nil {
-		return finalError // 返回第一个遇到的错误
-	}
-
-	if len(partETags) == 0 {
-		return fmt.Errorf("no data parts were read or uploaded for %s", objectPath)
+	// --- 12. 检查是否出错 ---
+	if uploadCtx.Err() != nil {
+		return fmt.Errorf("uploaded failed for %s", objectPath)
 	}
 
 	// --- 13. 收集并排序分片结果（按 PartNumber） ---
@@ -414,8 +354,6 @@ func (s *S3Cli) UploadMultipart(ctx context.Context, objectPath string, data io.
 }
 
 func (s *S3Cli) HeadMultipartUpload(ctx context.Context, objectPath string) (*s3.MultipartUpload, error) {
-	t, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
 
 	params := &s3.ListMultipartUploadsInput{
 		Bucket: aws.String(s.cfg.Bucket),
@@ -424,7 +362,7 @@ func (s *S3Cli) HeadMultipartUpload(ctx context.Context, objectPath string) (*s3
 	}
 
 	var upload *s3.MultipartUpload
-	err := s.s3Client.ListMultipartUploadsPagesWithContext(t, params,
+	err := s.s3Client.ListMultipartUploadsPagesWithContext(ctx, params,
 		func(page *s3.ListMultipartUploadsOutput, lastPage bool) bool {
 			for _, u := range page.Uploads {
 				// 精确匹配 Key
@@ -453,15 +391,11 @@ func (s *S3Cli) ListParts(ctx context.Context, bucketName, objectKey, uploadID s
 		return nil, errors.New("input params is empty")
 	}
 
-	// 创建带超时的子 context（可选）
-	t, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-
 	var allParts []*s3.Part
 	var partNumberMarker *int64 = nil
 	const maxParts = 10000
 	for {
-		resp, err := s.s3Client.ListPartsWithContext(t, &s3.ListPartsInput{
+		resp, err := s.s3Client.ListPartsWithContext(ctx, &s3.ListPartsInput{
 			Bucket:           aws.String(bucketName),
 			Key:              aws.String(objectKey),
 			UploadId:         aws.String(uploadID),
@@ -491,13 +425,9 @@ func (s *S3Cli) InitPart(ctx context.Context, bucketName, objectKey string) (str
 		return "", errors.New("empty object key or bucket name")
 	}
 
-	// 创建带超时的子 context（可选）
-	t, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-
 	logger.Infof("Initializing multipart upload for %s/%s", bucketName, objectKey)
 
-	resp, err := s.s3Client.CreateMultipartUploadWithContext(t, &s3.CreateMultipartUploadInput{
+	resp, err := s.s3Client.CreateMultipartUploadWithContext(ctx, &s3.CreateMultipartUploadInput{
 		Bucket: aws.String(bucketName),
 		Key:    aws.String(objectKey),
 	})
@@ -514,13 +444,10 @@ func (s *S3Cli) UploadPart(ctx context.Context, bucketName, objectKey, uploadID 
 	if bucketName == "" || objectKey == "" || uploadID == "" {
 		return "", errors.New("input params is empty")
 	}
-	// 创建带超时的子 context（可选）
-	t, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
 
 	logger.Infof("start uploading %d bytes to part %d of %s/%s", len(data), partNumber, bucketName, objectKey)
 
-	resp, err := s.s3Client.UploadPartWithContext(t, &s3.UploadPartInput{
+	resp, err := s.s3Client.UploadPartWithContext(ctx, &s3.UploadPartInput{
 		Bucket:     aws.String(bucketName),
 		Key:        aws.String(objectKey),
 		PartNumber: aws.Int64(partNumber),
@@ -541,10 +468,6 @@ func (s *S3Cli) CompletePart(ctx context.Context, bucketName, objectKey, uploadI
 		return errors.New("input params is empty")
 	}
 
-	// 创建带超时的子 context（可选）
-	t, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-
 	// 排序 Parts
 	sortedParts := make([]*s3.CompletedPart, len(uploadedParts))
 	copy(sortedParts, uploadedParts)
@@ -562,7 +485,7 @@ func (s *S3Cli) CompletePart(ctx context.Context, bucketName, objectKey, uploadI
 
 	logger.Infof("Completing multipart upload for %s/%s", bucketName, objectKey)
 
-	_, err := s.s3Client.CompleteMultipartUploadWithContext(t, &s3.CompleteMultipartUploadInput{
+	_, err := s.s3Client.CompleteMultipartUploadWithContext(ctx, &s3.CompleteMultipartUploadInput{
 		Bucket:          aws.String(bucketName),
 		Key:             aws.String(objectKey),
 		UploadId:        aws.String(uploadID),
@@ -582,13 +505,10 @@ func (s *S3Cli) AbortMultipartUpload(ctx context.Context, bucketName, objectKey,
 	if bucketName == "" || objectKey == "" || uploadID == "" {
 		return errors.New("input params is empty")
 	}
-	// 创建带超时的子 context（可选）
-	t, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
 
 	logger.Infof("Aborting multipart upload: UploadId=%s", uploadID)
 
-	_, err := s.s3Client.AbortMultipartUploadWithContext(t, &s3.AbortMultipartUploadInput{
+	_, err := s.s3Client.AbortMultipartUploadWithContext(ctx, &s3.AbortMultipartUploadInput{
 		Bucket:   aws.String(bucketName),
 		Key:      aws.String(objectKey),
 		UploadId: aws.String(uploadID),
@@ -607,11 +527,7 @@ func (s *S3Cli) IsUploadIDExist(ctx context.Context, bucket, key, uploadID strin
 		return false, errors.New("input params is empty")
 	}
 
-	// 创建带超时的子 context（可选）
-	t, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-
-	_, err := s.s3Client.ListPartsWithContext(t, &s3.ListPartsInput{
+	_, err := s.s3Client.ListPartsWithContext(ctx, &s3.ListPartsInput{
 		Bucket:   aws.String(bucket),
 		Key:      aws.String(key),
 		UploadId: aws.String(uploadID),
@@ -627,4 +543,58 @@ func (s *S3Cli) IsUploadIDExist(ctx context.Context, bucket, key, uploadID strin
 	}
 
 	return true, nil
+}
+
+// IsBucketExist 检查指定的 S3 Bucket 是否存在。
+func (s *S3Cli) IsBucketExist(ctx context.Context, bucketName string) (bool, error) {
+	input := &s3.HeadBucketInput{
+		Bucket: aws.String(bucketName),
+	}
+
+	_, err := s.s3Client.HeadBucketWithContext(ctx, input)
+	if err != nil {
+		var apiErr *smithy.GenericAPIError
+		if errors.As(err, &apiErr) && apiErr.ErrorCode() == "NotFound" {
+			// Bucket 不存在
+			return false, nil
+		}
+		// 其他错误（如权限不足、网络问题等）
+		return false, err
+	}
+
+	// 没有出错，说明 Bucket 存在
+	return true, nil
+}
+
+// CreateBucket 创建一个新 Bucket
+func (s *S3Cli) CreateBucket(ctx context.Context, bucketName string) error {
+	logger.Infof("Creating bucket: %s", bucketName)
+
+	_, err := s.s3Client.CreateBucketWithContext(ctx, &s3.CreateBucketInput{
+		Bucket: aws.String(bucketName),
+	})
+
+	if err != nil {
+		var apiErr smithy.APIError
+		if errors.As(err, &apiErr) {
+			switch apiErr.ErrorCode() {
+			case "BucketAlreadyOwnedByYou":
+				logger.Infof("Bucket %s already owned by you.", bucketName)
+				return nil
+			case "BucketAlreadyExists":
+				logger.Infof("Bucket %s already exists but not owned by you.", bucketName)
+				return nil
+				// return fmt.Errorf("bucket %s already exists but not owned by you", bucketName)
+			default:
+				logger.Infof("Failed to create bucket %s: %v", bucketName, err)
+				return err
+			}
+		} else {
+			logger.Infof("Failed to create bucket %s: %v", bucketName, err)
+			return err
+		}
+	}
+
+	logger.Infof("Bucket created success : %s", bucketName)
+	return nil
 }

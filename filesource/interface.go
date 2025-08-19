@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"s3copy/utils"
 	"time"
 )
 
@@ -47,6 +48,8 @@ type contextAwareReader struct {
 	io.ReadCloser
 }
 
+var logger = utils.GetLogger("s3copy")
+
 func (r *contextAwareReader) Read(p []byte) (n int, err error) {
 	if err := r.ctx.Err(); err != nil {
 		return 0, err
@@ -63,6 +66,7 @@ func NewSource(srctype string, source string) (Source, error) {
 	case "http":
 		return NewURLSource(source)
 	default:
+		logger.Errorf("unsupported source type: %s", srctype)
 		return nil, fmt.Errorf("Unsupported source type: %s", srctype)
 	}
 }
