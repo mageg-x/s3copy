@@ -197,14 +197,14 @@ func (c *Copier) Copy() error {
 				}
 
 				logger.Debugf("get from key %s to key is: %s", f.Key, key)
-
+				progress := utils.GetProgress()
 				var uploadErr error
 				if isSameOrigin {
 					uploadErr = s3cli.CopyObject(ctx, srcEndPoint, f.Key, key, objMeta)
 					if uploadErr != nil {
+						atomic.AddInt64(&progress.FailObjects, 1)
 						logger.Errorf("failed to copy object %s, %v", key, uploadErr)
 					} else {
-						progress := utils.GetProgress()
 						atomic.AddInt64(&progress.UploadObjects, 1)
 						atomic.AddInt64(&progress.UploadSize, objSize)
 						continue
@@ -215,18 +215,18 @@ func (c *Copier) Copy() error {
 					// 对于大文件使用分块上传
 					uploadErr = s3cli.UploadMultipart(ctx, srcFS, f.Key, key, objMeta)
 					if uploadErr != nil {
+						atomic.AddInt64(&progress.FailObjects, 1)
 						logger.Errorf("failed to multiupload %s, %v", key, uploadErr)
 					} else {
-						progress := utils.GetProgress()
 						atomic.AddInt64(&progress.UploadObjects, 1)
 					}
 				} else {
 					// 简单上传
 					uploadErr = s3cli.UploadObject(ctx, srcFS, f.Key, key, objMeta)
 					if uploadErr != nil {
+						atomic.AddInt64(&progress.FailObjects, 1)
 						logger.Errorf("failed to upload %s, %v", key, uploadErr)
 					} else {
-						progress := utils.GetProgress()
 						atomic.AddInt64(&progress.UploadObjects, 1)
 						atomic.AddInt64(&progress.UploadSize, objSize)
 					}

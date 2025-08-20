@@ -54,35 +54,42 @@ export DST_S3_REGION=destination_region  # Optional, default: us-east-1
 
 ```bash
 # Copy a single file
-s3copy -from-file /path/to/file.txt -to http://region.s3.com/oss1001
+s3copy --from-file /path/to/file.txt --to http://region.s3.com/oss1001
 
 # Copy an entire directory
-s3copy -from-file /path/to/directory -to http://region.s3.com/oss1001
+s3copy --from-file /path/to/directory --to http://region.s3.com/oss1001
 ```
 
 ### Copy from URL to S3
 
 ```bash
+# Prepare urls.txt with the following content:
+https://dldir1.qq.com/qqfile/qq/PCQQ9.7.17/QQ9.7.17.29225.exe
+https://wirelesscdn-download.xuexi.cn/publish/xuexi_android/latest/xuexi_android_10002068.apk
+https://dldir1v6.qq.com/weixin/Universal/Windows/WeChatWin.exe
+https://24d561-2075664011.antpcdn.com:19001/b/pkg-ant.baidu.com/issue/netdisk/yunguanjia/BaiduNetdisk_7.55.1.101.exe
+
+
 # Copy from HTTP/HTTPS URL
-s3copy -from-url https://example.com/urllist.txt -to http://region.s3.com/oss1001
+s3copy --from-url urls.txt --to http://region.s3.com/oss1001
 ```
 
 ### Copy from S3 to S3
 
 ```bash
 # Copy across S3 buckets
-s3copy -from-s3 http://oss1001.region.s4.comm -to http://region.s3.com/oss1001
+s3copy --from-s3 http://oss1001.region.s4.comm --to http://region.s3.com/oss1001
 ```
 
 ## Configuration Options
 
-| Parameter | Description | Default Value |
-|-----------|-------------|---------------|
-| `-T`, `--concurrent` | Number of concurrent uploads | 10 |
-| `--part-size` | Part size for multipart upload in bytes | 33554432 (32MB) |
-| `-q`, `--quiet` | Quiet mode (no output) | false |
-| `-v`, `--verbose` | Increase verbosity: -v for INFO, -vv for DEBUG, -vvv for TRACE | 0 |
-| `--max-retries` | Number of retries for failed uploads | 3 |
+| Parameter             | Description | Default Value |
+|-----------------------|-------------|---------------|
+| `--T`                 | Number of concurrent uploads | 10 |
+| `--part-size`         | Part size for multipart upload in bytes | 33554432 (32MB) |
+| `-q`, `--quiet`       | Quiet mode (no output) | false |
+| `-v`, `--verbose`     | Increase verbosity: -v for INFO, -vv for DEBUG, -vvv for TRACE | 0 |
+| `--max-retries`       | Number of retries for failed uploads | 3 |
 
 ### Advanced Usage Example
 
@@ -90,7 +97,7 @@ s3copy -from-s3 http://oss1001.region.s4.comm -to http://region.s3.com/oss1001
 # Copy with custom settings
 s3copy --from-file /large-dataset \
   --to http://region.s3.com/backup \
-  -T 20 \
+  --T 20 \
   --part-size 67108864 \
   --max-retries 5 \
   -vv
@@ -115,7 +122,9 @@ The tool outputs progress in JSON format every second:
 {
   "total_size": 1048576000,  // Total bytes to transfer
   "migrated_size": 524288000, // Bytes already transferred
-  "migrated_objects": 50,     // Number of objects completed
+  "total_objects": 7,         // Total number of objects/files
+  "migrated_objects": 2,      // Number of completed objects
+  "fail_objects": 0,          // Number of failed objects
   "average_speed": 10485760,  // Average transfer speed in bytes/second
   "progress": 50.00           // Completion percentage
 }
@@ -179,7 +188,7 @@ All errors are logged with descriptive messages, and internal state is updated t
 
 ## Performance Optimization Tips
 
-1. **Concurrent Uploads**: Increase `-T` for better throughput (balance with system resources)
+1. **Concurrent Uploads**: Increase `--T` for better throughput (balance with system resources)
 2. **Part Size**: Larger parts reduce API calls but increase memory usage
 3. **Network Selection**: Use endpoints in the same region for better performance
 4. **Memory Usage**: The tool is designed to use minimal memory regardless of file size

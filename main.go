@@ -188,4 +188,7 @@ func runS3Copy(*cobra.Command, []string) {
 	}
 	//结束前打印一次输出进度
 	progress.Report("")
+	if utils.GetProgress().FailObjects > 0 {
+		os.Exit(2)
+	}
 }

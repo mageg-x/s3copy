@@ -54,35 +54,41 @@ export DST_S3_REGION=目标区域  # 可选，默认：us-east-1
 
 ```bash
 # 复制单个文件
-s3copy -from-file /path/to/file.txt -to http://region.s3.com/oss1001
+s3copy --from-file /path/to/file.txt --to http://region.s3.com/oss1001
 
 # 复制整个目录
-s3copy -from-file /path/to/directory -to http://region.s3.com/oss1001
+s3copy --from-file /path/to/directory --to http://region.s3.com/oss1001
 ```
 
 ### 从URL复制到S3
 
 ```bash
+# 准备 urls.txt 内容如下
+https://dldir1.qq.com/qqfile/qq/PCQQ9.7.17/QQ9.7.17.29225.exe
+https://wirelesscdn-download.xuexi.cn/publish/xuexi_android/latest/xuexi_android_10002068.apk
+https://dldir1v6.qq.com/weixin/Universal/Windows/WeChatWin.exe
+https://24d561-2075664011.antpcdn.com:19001/b/pkg-ant.baidu.com/issue/netdisk/yunguanjia/BaiduNetdisk_7.55.1.101.exe
+
 # 从HTTP/HTTPS URL复制
-s3copy -from-url https://example.com/urllist.txt -to http://region.s3.com/oss1001
+s3copy --from-url urls.txt --to http://region.s3.com/oss1001
 ```
 
 ### 从S3复制到S3
 
 ```bash
 # 跨S3存储桶复制
-s3copy -from-s3 http://oss1001.region.s4.comm -to http://region.s3.com/oss1001
+s3copy --from-s3 http://oss1001.region.s4.comm --to http://region.s3.com/oss1001
 ```
 
 ## 配置选项
 
-| 参数 | 描述 | 默认值 |
-|------|------|--------|
-| `-T`, `--concurrent` | 并发上传数量 | 10 |
-| `--part-size` | 分块上传大小（字节） | 33554432 (32MB) |
-| `-q`, `--quiet` | 静默模式（无输出） | false |
+| 参数                | 描述                                                      | 默认值 |
+|-------------------|---------------------------------------------------------|--------|
+| `--T`             | 并发上传线程数量                                                | 10 |
+| `--part-size`     | 分块上传大小（字节）                                              | 33554432 (32MB) |
+| `-q`, `--quiet`   | 静默模式（无输出）                                               | false |
 | `-v`, `--verbose` | 增加日志详细程度：-v 表示 INFO 级别，-vv 表示 DEBUG 级别，-vvv 表示 TRACE 级别 | 0 |
-| `--max-retries` | 失败上传的重试次数 | 3 |
+| `--max-retries`   | 失败上传的重试次数                                               | 3 |
 
 ### 高级用法示例
 
@@ -90,7 +96,7 @@ s3copy -from-s3 http://oss1001.region.s4.comm -to http://region.s3.com/oss1001
 # 使用自定义设置进行复制
 s3copy --from-file /large-dataset \
   --to http://region.s3.com/backup \
-  -T 20 \
+  --T 20 \
   --part-size 67108864 \
   --max-retries 5 \
   -vv
@@ -116,7 +122,9 @@ s3copy --from-file /large-dataset \
 {
   "total_size": 1048576000,  // 总字节数
   "migrated_size": 524288000, // 已传输字节数
-  "migrated_objects": 50,     // 已完成对象数
+  "total_objects": 7,         // 总对象/文件 个数
+  "migrated_objects": 2,     // 已完成对象数
+  "fail_objects": 0,          // 上传出错的文件个数
   "average_speed": 10485760,  // 平均速度（字节/秒）
   "progress": 50.00           // 完成百分比
 }
@@ -180,18 +188,13 @@ s3copy --from-file /large-dataset \
 
 ## 性能优化提示
 
-1. **并发上传**：增加`-T`值提高吞吐量（需平衡系统资源）
+1. **并发上传**：增加`--T`值提高吞吐量（需平衡系统资源）
 2. **分块大小**：larger分块减少API调用但增加内存使用
 3. **网络选择**：使用同一区域的端点以获得更好性能
 4. **内存使用**：工具设计为无论文件大小都使用最小内存
 5. **重试设置**：根据网络稳定性调整`--max-retries`
 6. **同源复制**：同一账户和区域内的S3到S3复制，工具会自动使用更高效的CopyObject API，节省带宽
 
-1. **并发上传**：增加`-T`值提高吞吐量（需平衡系统资源）
-2. **分块大小**： larger分块减少API调用但增加内存使用
-3. **网络选择**：使用同一区域的端点以获得更好性能
-4. **内存使用**：工具设计为无论文件大小都使用最小内存
-5. **重试设置**：根据网络稳定性调整`--max-retries`
 
 ## 许可证
 
