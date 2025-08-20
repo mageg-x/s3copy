@@ -71,6 +71,9 @@ func (c *Copier) Stat(src source.Source) {
 	progress := utils.GetProgress()
 	fileCh, _ := src.List(context.Background(), true)
 	for f := range fileCh {
+		if f.IsDir {
+			continue
+		}
 		atomic.AddInt64(&progress.TotalSize, f.Size)
 		atomic.AddInt64(&progress.TotalObjects, 1)
 	}

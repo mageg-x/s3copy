@@ -57,14 +57,14 @@ export DST_S3_REGION=destination_region  # Optional, default: us-east-1
 s3copy -from-file /path/to/file.txt -to http://region.s3.com/oss1001
 
 # Copy an entire directory
-s3copy -from-file /path/to/directory -to http://region.s3.com/oss1001/directory
+s3copy -from-file /path/to/directory -to http://region.s3.com/oss1001
 ```
 
 ### Copy from URL to S3
 
 ```bash
 # Copy from HTTP/HTTPS URL
-s3copy -from-url https://example.com/file.zip -to http://region.s3.com/oss1001
+s3copy -from-url https://example.com/urllist.txt -to http://region.s3.com/oss1001
 ```
 
 ### Copy from S3 to S3
@@ -88,12 +88,12 @@ s3copy -from-s3 http://oss1001.region.s4.comm -to http://region.s3.com/oss1001
 
 ```bash
 # Copy with custom settings
-s3copy -from-file /large-dataset \
-  -to http://region.s3.com/oss1001/backup \
+s3copy --from-file /large-dataset \
+  --to http://region.s3.com/backup \
   -T 20 \
   --part-size 67108864 \
   --max-retries 5 \
-  -v
+  -vv
 ```
 
 ## Endpoint Format Support
@@ -102,12 +102,10 @@ The tool supports multiple endpoint formats:
 
 1. **Bucket as subdomain**: `http://bucket.endpoint.com`
 2. **Bucket in path**: `http://endpoint.com/bucket`
-3. **Bucket with prefix**: `http://endpoint.com/bucket/prefix`
 
 **Examples**:
 - `http://oss1001.region.s3.com`
 - `http://region.s3.com/oss1001`
-- `http://region.s3.com/oss1001/backup/`
 
 ## Progress Output
 

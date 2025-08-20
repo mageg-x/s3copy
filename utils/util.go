@@ -19,6 +19,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/smithy-go"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 )
@@ -131,4 +132,23 @@ func HandleSpecialErrors(err error, operation string) (bool, error) {
 	}
 
 	return false, nil
+}
+
+// IsNormalFile 判断路径是否为一个存在的普通文件
+func IsNormalFile(path string) bool {
+	if path == "" {
+		return false
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+
+	// 判断是否为普通文件（不是目录、符号链接、设备等）
+	if !info.Mode().IsRegular() {
+		return false
+	}
+
+	return true
 }

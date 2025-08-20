@@ -57,14 +57,14 @@ export DST_S3_REGION=目标区域  # 可选，默认：us-east-1
 s3copy -from-file /path/to/file.txt -to http://region.s3.com/oss1001
 
 # 复制整个目录
-s3copy -from-file /path/to/directory -to http://region.s3.com/oss1001/directory
+s3copy -from-file /path/to/directory -to http://region.s3.com/oss1001
 ```
 
 ### 从URL复制到S3
 
 ```bash
 # 从HTTP/HTTPS URL复制
-s3copy -from-url https://example.com/file.zip -to http://region.s3.com/oss1001
+s3copy -from-url https://example.com/urllist.txt -to http://region.s3.com/oss1001
 ```
 
 ### 从S3复制到S3
@@ -88,12 +88,12 @@ s3copy -from-s3 http://oss1001.region.s4.comm -to http://region.s3.com/oss1001
 
 ```bash
 # 使用自定义设置进行复制
-s3copy -from-file /large-dataset \
-  -to http://region.s3.com/oss1001/backup \
+s3copy --from-file /large-dataset \
+  --to http://region.s3.com/backup \
   -T 20 \
   --part-size 67108864 \
   --max-retries 5 \
-  -v
+  -vv
 ```
 
 ## 端点格式支持
@@ -102,12 +102,11 @@ s3copy -from-file /large-dataset \
 
 1. **桶作为子域名**：`http://bucket.endpoint.com`
 2. **桶在路径中**：`http://endpoint.com/bucket`
-3. **带前缀的桶**：`http://endpoint.com/bucket/prefix`
 
 **示例**：
 - `http://oss1001.region.s3.com`
 - `http://region.s3.com/oss1001`
-- `http://region.s3.com/oss1001/backup/`
+
 
 ## 进度输出
 

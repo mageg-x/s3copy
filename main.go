@@ -100,24 +100,6 @@ func runS3Copy(*cobra.Command, []string) {
 		}
 	}
 
-	// 检查环境变量是否存在
-	if os.Getenv("SRC_ACCESS_KEY") == "" {
-		fmt.Printf("SRC ACCESS KEY can not be empty!")
-		os.Exit(101)
-	}
-	if os.Getenv("SRC_SECRET_KEY") == "" {
-		fmt.Printf("SRC SECRET KEY can not be empty!")
-		os.Exit(102)
-	}
-	if os.Getenv("DST_ACCESS_KEY") == "" {
-		fmt.Printf("DST ACCESS KEY can not be empty!")
-		os.Exit(103)
-	}
-	if os.Getenv("DST_SECRET_KEY") == "" {
-		fmt.Printf("DST SECRET KEY can not be empty!")
-		os.Exit(104)
-	}
-
 	if fromFile != "" {
 		sourceCount++
 		source = fromFile
@@ -136,16 +118,37 @@ func runS3Copy(*cobra.Command, []string) {
 
 	if sourceCount == 0 {
 		logger.Errorf("error: must specify one of --from-file, --from-url, or --from-s3")
-		os.Exit(1)
+		os.Exit(100)
 	}
 	if sourceCount > 1 {
 		logger.Errorf("error: can only specify one source type")
-		os.Exit(1)
+		os.Exit(100)
 	}
 
 	if to == "" {
 		logger.Errorf("error: --to is required")
-		os.Exit(1)
+		os.Exit(100)
+	}
+	if sourceType == "http" && !utils.IsNormalFile(fromURL) {
+		fmt.Printf("SRC ACCESS KEY can not be empty!")
+		os.Exit(105)
+	}
+	// 检查环境变量是否存在
+	if sourceType == "s3" && os.Getenv("SRC_ACCESS_KEY") == "" {
+		fmt.Printf("SRC ACCESS KEY can not be empty!")
+		os.Exit(101)
+	}
+	if sourceType == "s3" && os.Getenv("SRC_SECRET_KEY") == "" {
+		fmt.Printf("SRC SECRET KEY can not be empty!")
+		os.Exit(102)
+	}
+	if os.Getenv("DST_ACCESS_KEY") == "" {
+		fmt.Printf("DST ACCESS KEY can not be empty!")
+		os.Exit(103)
+	}
+	if os.Getenv("DST_SECRET_KEY") == "" {
+		fmt.Printf("DST SECRET KEY can not be empty!")
+		os.Exit(104)
 	}
 
 	copyOpt := copier.CopyOptions{
@@ -162,12 +165,12 @@ func runS3Copy(*cobra.Command, []string) {
 		absPath, err := filepath.Abs(source)
 		if err != nil {
 			logger.Fatalf("failed to get absolute path for %s: %v", source, err)
-			os.Exit(2)
+			os.Exit(106)
 		}
 		realPath, err := filepath.EvalSymlinks(absPath)
 		if err != nil {
 			logger.Fatalf("failed to get absolute path for %s: %v", source, err)
-			os.Exit(2)
+			os.Exit(106)
 		}
 		copyOpt.SourcePath = realPath
 	}
@@ -175,13 +178,13 @@ func runS3Copy(*cobra.Command, []string) {
 	cp, err := copier.NewCopier(&copyOpt)
 	if err != nil || cp == nil {
 		logger.Fatalf("new copier failed: %v", err)
-		os.Exit(2)
+		os.Exit(107)
 	}
 
 	err = cp.Copy()
 	if err != nil {
 		logger.Fatalf("copy failed: %v", err)
-		os.Exit(3)
+		os.Exit(1)
 	}
 	//结束前打印一次输出进度
 	progress.Report("")
