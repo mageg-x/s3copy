@@ -1,3 +1,5 @@
+English | [中文](https://github.com/mageg-x/s3copy/blob/main/README.md)
+
 # S3Copy Tool
 
 ## A Powerful S3 Copy Tool for Efficient Data Migration
