@@ -37,6 +37,10 @@ func NewURLSource(source string) (*URLSource, error) {
 	return &URLSource{httpClient: &http.Client{}, path: source}, nil
 }
 
+func (s *URLSource) Type() string {
+	return "http"
+}
+
 // List 返回 URL 文件中的对象列表
 func (s *URLSource) List(ctx context.Context, recursive bool) (<-chan ObjectInfo, <-chan error) {
 	objChan := make(chan ObjectInfo)
@@ -137,6 +141,42 @@ func (s *URLSource) Read(ctx context.Context, path string, offset int64) (io.Rea
 	}
 
 	return resp.Body, fileSize, nil
+}
+
+// ReadRange 读取指定范围内的URL数据
+func (s *URLSource) ReadRange(ctx context.Context, path string, start, end int64) (io.ReadCloser, error) {
+	// 创建请求
+	req, err := http.NewRequestWithContext(ctx, "GET", path, nil)
+	if err != nil {
+		logger.Errorf("failed to create http request: %v", err)
+		return nil, err
+	}
+
+	// 设置 Range 头
+	rangeHeader := fmt.Sprintf("bytes=%d-%d", start, end)
+	req.Header.Set("Range", rangeHeader)
+
+	// 发送请求
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		logger.Errorf("failed to send http request: %v", err)
+		return nil, err
+	}
+
+	// 检查响应状态码
+	if resp.StatusCode != http.StatusPartialContent {
+		resp.Body.Close()
+		logger.Errorf("http request failed with status: %s", resp.Status)
+		return nil, fmt.Errorf("HTTP request failed with status: %s, expected 206 Partial Content", resp.Status)
+	}
+
+	// 创建上下文感知的读取器
+	ctxReader := &contextAwareReader{
+		ctx:        ctx,
+		ReadCloser: resp.Body,
+	}
+
+	return ctxReader, nil
 }
 
 func (s *URLSource) GetMetadata(ctx context.Context, path string) (map[string]string, error) {

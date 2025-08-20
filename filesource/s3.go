@@ -69,6 +69,10 @@ func NewS3Source(source string) (*S3Source, error) {
 	}, nil
 }
 
+func (s *S3Source) Type() string {
+	return "s3"
+}
+
 func (s *S3Source) List(ctx context.Context, recursive bool) (<-chan ObjectInfo, <-chan error) {
 	objectCh := make(chan ObjectInfo, 100)
 	errCh := make(chan error, 1)
@@ -191,6 +195,50 @@ func (s *S3Source) Read(ctx context.Context, path string, offset int64) (io.Read
 	}
 
 	return ctxReader, fullSize, nil
+}
+
+// ReadRange 读取指定范围内的S3对象数据
+func (s *S3Source) ReadRange(ctx context.Context, path string, start, end int64) (io.ReadCloser, error) {
+	// 构建获取对象的请求
+	params := &s3.GetObjectInput{
+		Bucket: aws.String(s.config.Bucket),
+		Key:    aws.String(path),
+	}
+
+	// 获取完整对象大小以验证范围
+	headResp, err := s.s3Client.HeadObjectWithContext(ctx, &s3.HeadObjectInput{
+		Bucket: params.Bucket,
+		Key:    params.Key,
+	})
+	if err != nil {
+		logger.Errorf("failed to head s3 object: %v", err)
+		return nil, err
+	}
+	fullSize := *headResp.ContentLength
+
+	// 验证范围
+	if start < 0 || end >= fullSize || start > end {
+		return nil, fmt.Errorf("invalid range: start=%d, end=%d, fullSize=%d", start, end, fullSize)
+	}
+
+	// 设置 Range 头
+	rangeHeader := fmt.Sprintf("bytes=%d-%d", start, end)
+	params.Range = aws.String(rangeHeader)
+
+	// 获取对象（流式）
+	resp, err := s.s3Client.GetObjectWithContext(ctx, params)
+	if err != nil {
+		logger.Errorf("failed to get s3 object: %v", err)
+		return nil, err
+	}
+
+	// 创建上下文感知的读取器
+	ctxReader := &contextAwareReader{
+		ctx:        ctx,
+		ReadCloser: resp.Body,
+	}
+
+	return ctxReader, nil
 }
 
 // GetMetadata 获取 S3 对象的元数据

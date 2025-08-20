@@ -28,8 +28,11 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
-var mu sync.Mutex
-var loggers = make(map[string]*logHandle)
+var (
+	newlineReplacer = strings.NewReplacer("\n", "", "\r", "")
+	loggers         = make(map[string]*logHandle)
+	mu              sync.Mutex
+)
 
 type logHandle struct {
 	logrus.Logger
@@ -62,15 +65,16 @@ func (l *logHandle) Format(e *logrus.Entry) ([]byte, error) {
 	}
 	const timeFormat = "2006/01/02 15:04:05.000000"
 	timestamp := e.Time.Format(timeFormat)
-	str := fmt.Sprintf("%s%v %s[%d] <%v>: %v [%s:%d]",
+	str := fmt.Sprintf("%s%v %s[%d] <%v>: [%s:%d] %v",
 		l.logid,
 		timestamp,
 		l.name,
 		os.Getpid(),
 		lvlStr,
-		strings.TrimRight(e.Message, "\n"),
 		path.Base(e.Caller.File),
-		e.Caller.Line)
+		e.Caller.Line,
+		newlineReplacer.Replace(e.Message),
+	)
 
 	if len(e.Data) != 0 {
 		str += " " + fmt.Sprint(e.Data)

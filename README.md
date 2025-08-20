@@ -1,181 +1,179 @@
 # S3Copy Tool
 
-A powerful S3 copy tool with advanced features including multipart upload, resume capability, ETag checking, and concurrent operations.
+## 强大的S3复制工具，让数据迁移更高效
 
-## Features
+S3Copy是一个功能强大的命令行工具，专为高效复制数据到S3存储而设计。无论是从本地文件、HTTP URL还是其他S3存储，它都能提供快速、可靠的传输体验，并支持断点续传、分块上传等高级特性。
 
-- **Multiple Source Types**: Support for local files/directories, HTTP/HTTPS URLs, and S3 buckets
-- **ETag Checking**: Automatically skip files that already exist based on ETag comparison
-- **Multipart Upload**: Automatically uses multipart upload for files larger than 32MB
-- **Resume Capability**: Interrupt and resume transfers without losing progress
-- **Concurrent Operations**: Configurable number of concurrent uploads for better performance
-- **Progress Reporting**: Real-time progress reporting in JSON format
-- **Memory Efficient**: Streams large HTTP files in chunks to avoid memory issues
+## 核心功能
 
-## Installation
+- 🚀 **多源支持**：本地文件/目录、HTTP/HTTPS URL、S3存储桶之间自由复制
+- 🔍 **智能跳过**：基于ETag自动跳过已存在的文件，避免重复传输
+- 📦 **分块上传**：超过32MB的文件自动使用分块上传，提升大文件传输效率
+- 🔄 **断点续传**：传输中断后可从中断点继续，无需重新开始
+- ⚡ **并发操作**：可配置的并发上传数量，充分利用带宽资源
+- 📊 **实时进度**：每秒以JSON格式输出传输进度，便于监控
+- 🧠 **内存优化**：流式处理大文件，避免内存溢出问题
+- 🪣 **自动建桶**：目标桶不存在时自动创建，简化操作流程
+- 🔁 **智能重试**：网络故障时自动重试，重试次数可配置
+
+## 快速开始
+
+### 安装步骤
 
 ```bash
+# 安装依赖（如需要）
+npm install
+
+# 下载Go模块
 go mod download
+
+# 编译项目
 go build -o s3copy .
 ```
 
-## Environment Variables
+### 环境变量配置
 
-Set the following environment variables for authentication:
+设置以下环境变量进行身份验证：
 
 ```bash
-# For source S3 (when copying from S3)
-export SRC_ACCESS_KEY=your_source_access_key
-export SRC_SECRET_KEY=your_source_secret_key
+# 源S3配置（从S3复制时需要）
+export SRC_ACCESS_KEY=你的源访问密钥
+export SRC_SECRET_KEY=你的源密钥
+export SRC_S3_REGION=源区域  # 可选，默认：us-east-1
 
-# For destination S3 (always required)
-export DST_ACCESS_KEY=your_dest_access_key
-export DST_SECRET_KEY=your_dest_secret_key
+# 目标S3配置（始终需要）
+export DST_ACCESS_KEY=你的目标访问密钥
+export DST_SECRET_KEY=你的目标密钥
+export DST_S3_REGION=目标区域  # 可选，默认：us-east-1
 ```
 
-## Usage
+## 使用示例
 
-### Copy from Local File/Directory
+### 从本地文件/目录复制到S3
 
 ```bash
-# Copy local file to S3
-./s3copy -from-file /path/to/file.txt -to http://region.s3.com/oss1001
+# 复制单个文件
+s3copy -from-file /path/to/file.txt -to http://region.s3.com/oss1001
 
-# Copy local directory to S3
-./s3copy -from-file /path/to/directory -to http://region.s3.com/oss1001/directory
+# 复制整个目录
+s3copy -from-file /path/to/directory -to http://region.s3.com/oss1001/directory
 ```
 
-### Copy from URL
+### 从URL复制到S3
 
 ```bash
-# Copy from HTTP/HTTPS URL to S3
-./s3copy -from-url https://example.com/file.zip -to http://region.s3.com/oss1001
+# 从HTTP/HTTPS URL复制
+s3copy -from-url https://example.com/file.zip -to http://region.s3.com/oss1001
 ```
 
-### Copy from S3 to S3
+### 从S3复制到S3
 
 ```bash
-# Copy from S3 bucket to another S3 bucket
-./s3copy -from-s3 http://oss1001.region.s4.comm -to http://region.s3.com/oss1001
+# 跨S3存储桶复制
+s3copy -from-s3 http://oss1001.region.s4.comm -to http://region.s3.com/oss1001
 ```
 
-### Configuration Options
+## 配置选项
+
+| 参数 | 描述 | 默认值 |
+|------|------|--------|
+| `-T`, `--concurrent` | 并发上传数量 | 10 |
+| `--part-size` | 分块上传大小（字节） | 33554432 (32MB) |
+| `-q`, `--quiet` | 静默模式（无输出） | false |
+| `--max-retries` | 失败上传的重试次数 | 3 |
+
+### 高级用法示例
 
 ```bash
---concurrent int         Number of concurrent uploads (default 10)
---part-size int          Part size for multipart upload in bytes (default 33554432)
---resume-file string     Resume file path (default ".s3copy-resume.json")
---skip-existing          Skip files that already exist (default true)
-```
-
-### Advanced Usage
-
-```bash
-# Copy with custom settings
-./s3copy -from-file /large-dataset \
+# 使用自定义设置进行复制
+s3copy -from-file /large-dataset \
   -to http://region.s3.com/oss1001/backup \
-  --concurrent 20 \
+  -T 20 \
   --part-size 67108864 \
-  --skip-existing=true
+  --max-retries 5 \
+  -q
 ```
 
-## Endpoint Format Support
+## 端点格式支持
 
-The tool supports multiple endpoint formats:
+工具支持多种端点格式：
 
-1. **Bucket as subdomain**: `http://bucket.endpoint.com`
-2. **Bucket in path**: `http://endpoint.com/bucket`
-3. **Bucket with prefix**: `http://endpoint.com/bucket/prefix`
+1. **桶作为子域名**：`http://bucket.endpoint.com`
+2. **桶在路径中**：`http://endpoint.com/bucket`
+3. **带前缀的桶**：`http://endpoint.com/bucket/prefix`
 
-Examples:
+**示例**：
 - `http://oss1001.region.s3.com`
 - `http://region.s3.com/oss1001`
 - `http://region.s3.com/oss1001/backup/`
 
-## Progress Output
+## 进度输出
 
-The tool outputs progress in JSON format every second:
+工具每秒以JSON格式输出进度：
 
 ```json
-{"total_size":1048576000,"migrated_size":524288000,"migrated_objects":50,"average_speed":10485760,"progress":50.00}
+{
+  "total_size": 1048576000,  // 总字节数
+  "migrated_size": 524288000, // 已传输字节数
+  "migrated_objects": 50,     // 已完成对象数
+  "average_speed": 10485760,  // 平均速度（字节/秒）
+  "progress": 50.00           // 完成百分比
+}
 ```
 
-- `total_size`: Total bytes to transfer
-- `migrated_size`: Bytes already transferred
-- `migrated_objects`: Number of objects completed
-- `average_speed`: Average transfer speed in bytes/second
-- `progress`: Completion percentage
+## 断点续传功能
 
-## Resume Capability
+传输中断后，只需再次运行相同命令即可恢复：
 
-If a transfer is interrupted, you can resume it by running the same command again. The tool will:
+1. 自动检测已传输的文件和分块
+2. 跳过已完成的文件
+3. 从中断的分块上传处继续
 
-1. Load the resume file (`.s3copy-resume.json` by default)
-2. Skip already completed files
-3. Resume incomplete multipart uploads from where they left off
+## ETag检查
 
-## ETag Checking
+工具自动比较ETag以避免不必要的传输：
 
-The tool automatically compares ETags to avoid unnecessary transfers:
+- 本地文件：计算MD5哈希值
+- S3对象：使用现有ETag
+- HTTP源：使用响应头中的ETag（如果有）
 
-- For local files: Calculates MD5 hash
-- For S3 objects: Uses existing ETag
-- For HTTP sources: Uses ETag from response headers (if available)
+## 大文件内存优化
 
-## Memory Optimization for Large HTTP Files
+处理大型HTTP文件时，工具采用以下策略：
 
-When downloading large files from HTTP/HTTPS sources, the tool:
+1. **分块流式传输**：同时下载和上传，避免一次性加载整个文件
+2. **内存控制**：使用固定大小的缓冲区，避免内存堆积
+3. **支持续传**：可从中断点恢复下载
+4. **高效缓冲**：优化缓冲区使用，平衡性能和内存占用
 
-1. **Streams data in chunks**: Downloads and uploads simultaneously in configurable part sizes
-2. **Avoids memory accumulation**: Never loads the entire file into memory
-3. **Supports resume**: Can resume interrupted downloads from the last completed part
-4. **Efficient buffering**: Uses fixed-size buffers to control memory usage
+## 自动桶创建
 
-This approach prevents memory overflow (OOM) issues when handling very large files.
+如果目标桶不存在，工具会在上传前自动创建它，省去手动创建的麻烦。
 
-## Examples
+## 重试机制
 
-### Environment Setup
+工具包含智能重试机制，默认情况下会重试失败的上传最多3次，每次间隔3秒。你可以通过`--max-retries`参数自定义重试次数。
 
-```bash
-export SRC_ACCESS_KEY=xxxx
-export SRC_SECRET_KEY=xxx
-export DST_ACCESS_KEY=xxxx
-export DST_SECRET_KEY=xxxx
-```
+## 错误处理
 
-### Copy Examples
+工具能处理各种错误情况：
 
-```bash
-# Copy local directory to S3
-./s3copy -from-file /local/path -to http://oss1001.region.s3.com
+- 网络中断（带可配置的重试逻辑）
+- 认证错误
+- 权限问题
+- 大文件内存限制
+- 无效端点格式
 
-# Copy from URL to S3
-./s3copy -from-url https://example.com/file.zip -to http://region.s3.com/oss1001
+所有错误都会记录详细信息，并更新内部状态以保持一致性。
 
-# Copy S3 to S3
-./s3copy -from-s3 http://oss1001.region.s4.com -to http://region.s3.com/oss1001
-```
+## 性能优化提示
 
-## Error Handling
+1. **并发上传**：增加`-T`值提高吞吐量（需平衡系统资源）
+2. **分块大小**： larger分块减少API调用但增加内存使用
+3. **网络选择**：使用同一区域的端点以获得更好性能
+4. **内存使用**：工具设计为无论文件大小都使用最小内存
+5. **重试设置**：根据网络稳定性调整`--max-retries`
 
-The tool handles various error conditions:
+## 许可证
 
-- Network interruptions (with retry logic)
-- Authentication errors
-- Permission issues
-- Memory constraints for large files
-- Invalid endpoint formats
-
-All errors are logged with descriptive messages, and the resume file is updated to maintain consistency.
-
-## Performance Tips
-
-1. **Concurrent Uploads**: Increase `--concurrent` for better throughput (balance with system resources)
-2. **Part Size**: Larger parts reduce API calls but use more memory
-3. **Network**: Use endpoints in the same region for better performance
-4. **Memory**: The tool is designed to use minimal memory regardless of file size
-
-## License
-
-MIT License
+AGPL 3 License

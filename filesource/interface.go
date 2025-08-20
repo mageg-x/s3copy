@@ -34,6 +34,8 @@ type ObjectInfo struct {
 
 // Source 定义了从各种来源读取数据的接口
 type Source interface {
+	Type() string
+
 	// List 返回源中的对象列表
 	// path: 要列出的路径
 	// recursive: 是否递归列出子目录
@@ -47,6 +49,15 @@ type Source interface {
 	//   int64: 对象的总大小
 	//   error: 可能的错误
 	Read(ctx context.Context, path string, offset int64) (io.ReadCloser, int64, error)
+
+	// ReadRange 读取指定范围内的数据
+	// path: 要读取的对象路径
+	// start: 起始位置（包含）
+	// end: 结束位置（包含）
+	// 返回值:
+	//   io.ReadCloser: 数据读取器
+	//   error: 可能的错误
+	ReadRange(ctx context.Context, path string, start, end int64) (io.ReadCloser, error)
 
 	// GetMetadata 获取对象的元数据
 	// path: 要获取元数据的对象路径

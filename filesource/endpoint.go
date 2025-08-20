@@ -55,13 +55,19 @@ func ParseEndpoint(endpoint string, isDest bool) (*EndpointConfig, error) {
 	if isDest {
 		config.AccessKey = os.Getenv("DST_ACCESS_KEY")
 		config.SecretKey = os.Getenv("DST_SECRET_KEY")
+		if region := os.Getenv("DST_S3_REGION"); region != "" {
+			config.Region = region
+		}
 	} else {
 		config.AccessKey = os.Getenv("SRC_ACCESS_KEY")
 		config.SecretKey = os.Getenv("SRC_SECRET_KEY")
+		if region := os.Getenv("SRC_S3_REGION"); region != "" {
+			config.Region = region
+		}
 	}
 
 	if config.AccessKey == "" || config.SecretKey == "" {
-		logger.Errorf("failed to parse endpoint URL")
+		logger.Errorf("missing ak/sk in environment variables")
 		return nil, fmt.Errorf("missing ak/sk in environment variables")
 	}
 

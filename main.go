@@ -15,10 +15,11 @@
 package main
 
 import (
-	"github.com/spf13/cobra"
 	"os"
 	"s3copy/copier"
 	"s3copy/utils"
+
+	"github.com/spf13/cobra"
 )
 
 var (
@@ -28,11 +29,14 @@ var (
 	to         string
 	concurrent int
 	partSize   int64
-
-	logger = utils.GetLogger("s3copy")
+	quiet      bool
+	logger     = utils.GetLogger("s3copy")
+	progress   = utils.GetProgress()
 )
 
 func main() {
+	utils.SetOutput(os.Stdout)
+	//utils.SetLogLevel(logrus.ErrorLevel)
 	var rootCmd = &cobra.Command{
 		Use:   "s3copy",
 		Short: "A powerful S3 copy tool with multipart upload and resume capabilities",
@@ -43,8 +47,10 @@ Features include ETag checking, multipart upload, resume capability, and concurr
 Environment Variables:
   SRC_ACCESS_KEY - Source access key
   SRC_SECRET_KEY - Source secret key  
+  SRC_S3_REGION  - Source region
   DST_ACCESS_KEY - Destination access key
-  DST_SECRET_KEY - Destination secret key`,
+  DST_SECRET_KEY - Destination secret key
+  DST_S3_REGION  - Destination region`,
 		Run: runS3Copy,
 	}
 
@@ -54,6 +60,7 @@ Environment Variables:
 	rootCmd.Flags().StringVar(&to, "to", "", "Destination S3 endpoint (required)")
 	rootCmd.Flags().IntVar(&concurrent, "T", 10, "Number of concurrent uploads")
 	rootCmd.Flags().Int64Var(&partSize, "part-size", 32*1024*1024, "Part size for multipart upload (bytes)")
+	rootCmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "quiet mode [Long and short option]")
 	rootCmd.MarkFlagRequired("to")
 
 	if err := rootCmd.Execute(); err != nil {
@@ -65,7 +72,9 @@ func runS3Copy(cmd *cobra.Command, args []string) {
 	// Validate that exactly one source is specified
 	sourceCount := 0
 	var source, sourceType string
-
+	if quiet {
+		utils.SetOutFile("/dev/null")
+	}
 	if fromFile != "" {
 		sourceCount++
 		source = fromFile
@@ -105,14 +114,17 @@ func runS3Copy(cmd *cobra.Command, args []string) {
 		PartSize:   partSize,
 	}
 
-	copier, err := copier.NewCopier(&copyOpt)
-	if err != nil {
+	cp, err := copier.NewCopier(&copyOpt)
+	if err != nil || cp == nil {
 		logger.Fatalf("new copier failed: %v", err)
+		os.Exit(2)
 	}
 
-	err = copier.Copy()
+	err = cp.Copy()
 	if err != nil {
 		logger.Fatalf("copy failed: %v", err)
+		os.Exit(3)
 	}
-
+	//结束前打印一次输出进度
+	progress.Report("")
 }

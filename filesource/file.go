@@ -42,6 +42,10 @@ func NewFileSource(source string) (*FileSource, error) {
 	return &FileSource{fs: afero.NewOsFs(), path: source}, nil
 }
 
+func (s *FileSource) Type() string {
+	return "file"
+}
+
 func (s *FileSource) List(ctx context.Context, recursive bool) (<-chan ObjectInfo, <-chan error) {
 	objectCh := make(chan ObjectInfo, 100)
 	errCh := make(chan error, 1)
@@ -161,6 +165,50 @@ func (s *FileSource) Read(ctx context.Context, path string, offset int64) (io.Re
 	}
 
 	return ctxReader, fileSize, nil
+}
+
+// ReadRange 读取指定范围内的本地文件数据
+func (s *FileSource) ReadRange(ctx context.Context, path string, start, end int64) (io.ReadCloser, error) {
+	// 打开文件
+	file, err := s.fs.Open(path)
+	if err != nil {
+		return nil, err
+	}
+
+	// 获取文件信息
+	info, err := file.Stat()
+	if err != nil {
+		file.Close()
+		logger.Errorf("failed to stat file %s: %v", path, err)
+		return nil, err
+	}
+
+	// 检查文件大小
+	fileSize := info.Size()
+
+	// 验证范围
+	if start < 0 || end >= fileSize || start > end {
+		file.Close()
+		return nil, fmt.Errorf("invalid range: start=%d, end=%d, fileSize=%d", start, end, fileSize)
+	}
+
+	// 设置偏移量
+	if _, err := file.Seek(start, io.SeekStart); err != nil {
+		file.Close()
+		logger.Errorf("failed to seek file %s: %v", path, err)
+		return nil, err
+	}
+
+	// 创建有限制的读取器
+	limitedReader := io.LimitReader(file, end-start+1)
+
+	// 创建上下文感知的读取器
+	ctxReader := &contextAwareReader{
+		ctx:        ctx,
+		ReadCloser: io.NopCloser(limitedReader),
+	}
+
+	return ctxReader, nil
 }
 
 // GetMetadata 获取文件的元数据

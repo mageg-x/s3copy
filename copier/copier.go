@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 // Copier 处理从文件源到S3的复制
@@ -57,6 +58,15 @@ func NewCopier(opt *CopyOptions) (*Copier, error) {
 	}, nil
 }
 
+func (c *Copier) Stat(src source.Source) {
+	progress := utils.GetProgress()
+	fileCh, _ := src.List(context.Background(), true)
+	for f := range fileCh {
+		atomic.AddInt64(&progress.TotalSize, f.Size)
+		atomic.AddInt64(&progress.TotalObjects, 1)
+	}
+}
+
 func (c *Copier) Copy() error {
 	// 打开上传
 	s3cli, err := Create(c.destConfig, 3, int(c.copyOpt.PartSize), c.copyOpt.Concurrent)
@@ -83,6 +93,10 @@ func (c *Copier) Copy() error {
 	if err != nil {
 		logger.Fatalf("failed to create source: %v", err)
 	}
+
+	// 为了统计需要，要知道文件总个数和总大小
+	go c.Stat(srcFS)
+	go utils.StartProgressReporter(context.Background(), utils.GetProgress())
 
 	// 获取文件列表
 	fileCh, errCh := srcFS.List(ctx, true)
@@ -141,14 +155,7 @@ func (c *Copier) Copy() error {
 				if ok {
 					objSize, _ = strconv.ParseInt(sizeStr, 10, 64)
 				}
-				// 3. 打开源对象
-				reader, size, err := srcFS.Read(ctx, f.Key, 0)
-				if err != nil {
-					logger.Errorf("failed to read %s: %v", f.Key, err)
-					continue
-				}
 
-				logger.Infof("read %s size %d|%d", f.Key, size, objSize)
 				key := f.Key
 				switch c.copyOpt.SourceType {
 				case "file":
@@ -167,22 +174,30 @@ func (c *Copier) Copy() error {
 						continue
 					}
 				}
+
 				var uploadErr error
 				if objSize > c.copyOpt.PartSize {
 					// 对于大文件使用分块上传
-					uploadErr = s3cli.UploadMultipart(ctx, key, reader, objMeta)
+					uploadErr = s3cli.UploadMultipart(ctx, srcFS, f.Key, key, objMeta)
 					if uploadErr != nil {
 						logger.Errorf("failed to multiupload %s, %v", key, uploadErr)
+					} else {
+						progress := utils.GetProgress()
+						atomic.AddInt64(&progress.UploadObjects, 1)
 					}
 				} else {
 					// 简单上传
-					uploadErr = s3cli.UploadObject(ctx, key, reader, objMeta)
+					uploadErr = s3cli.UploadObject(ctx, srcFS, f.Key, key, objMeta)
 					if uploadErr != nil {
 						logger.Errorf("failed to upload %s, %v", key, uploadErr)
+					} else {
+						progress := utils.GetProgress()
+						atomic.AddInt64(&progress.UploadObjects, 1)
+						atomic.AddInt64(&progress.UploadSize, objSize)
 					}
 				}
 				if uploadErr != nil {
-					cancel()
+					//cancel()
 				}
 			} // end for taskCh
 		}() // end goroutine

@@ -25,7 +25,7 @@ var logger = GetLogger("s3copy")
 func GetFileNameFromURL(urlStr string) (string, error) {
 	parsedURL, err := url.Parse(urlStr)
 	if err != nil {
-		logger.Errorf("Error parsing URL: %v", err)
+		logger.Errorf("error parsing URL: %v", err)
 		return "", fmt.Errorf("invalid URL: %v", err)
 	}
 
@@ -42,4 +42,16 @@ func GetFileNameFromURL(urlStr string) (string, error) {
 	}
 
 	return filename, nil
+}
+
+func Unique[T comparable](slice []T) []T {
+	seen := make(map[T]struct{})
+	var result []T
+	for _, v := range slice {
+		if _, ok := seen[v]; !ok {
+			seen[v] = struct{}{}
+			result = append(result, v)
+		}
+	}
+	return result
 }
