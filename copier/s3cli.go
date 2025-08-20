@@ -192,7 +192,7 @@ func (s *S3Cli) UploadObject(ctx context.Context, fs source.Source, from, to str
 		params.Metadata = metadataMap
 	}
 
-	return utils.WithRetry("upload object", s.MaxRetries, func() error {
+	return utils.WithRetry(fmt.Sprintf("upload object %s", to), s.MaxRetries, func() error {
 		// 执行上传
 		_, err := s.s3Client.PutObjectWithContext(ctx, params)
 		return err
@@ -389,7 +389,7 @@ func (s *S3Cli) UploadMultipart(ctx context.Context, fs source.Source, from, to 
 				logger.Debugf("starting upload %s part %d", to, part.PartNumber)
 				// 使用 withRetry 函数处理上传重试逻辑
 				etag, uploadPartErr := "", error(nil)
-				uploadPartErr = utils.WithRetry(fmt.Sprintf("upload part %d", part.PartNumber), s.MaxRetries, func() error {
+				uploadPartErr = utils.WithRetry(fmt.Sprintf("upload %s part %d", to, part.PartNumber), s.MaxRetries, func() error {
 					var err error
 					etag, err = s.UploadPart(uploadCtx, s.cfg.Bucket, to, uploadID, part.PartNumber, part.Data)
 					if err == nil {
@@ -669,7 +669,7 @@ func (s *S3Cli) CopyObject(ctx context.Context, fromEp *source.EndpointConfig, f
 	logger.Infof("copying object from %s/%s to %s/%s", fromEp.Bucket, fromKey, s.cfg.Bucket, toKey)
 
 	// 执行复制操作
-	return utils.WithRetry("copy object", s.MaxRetries, func() error {
+	return utils.WithRetry(fmt.Sprintf("copy object %s", toKey), s.MaxRetries, func() error {
 		_, err := s.s3Client.CopyObjectWithContext(ctx, params)
 		if err == nil {
 			logger.Infof("successfully copied object %s/%s to %s/%s",

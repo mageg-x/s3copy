@@ -15,6 +15,7 @@ S3Copy is a powerful command-line tool designed for efficient data copying to S3
 - 🧠 **Memory Optimization**: Stream large files in chunks to avoid memory overflow
 - 🪣 **Automatic Bucket Creation**: Automatically create destination bucket if it doesn't exist
 - 🔁 **Intelligent Retries**: Automatically retry on network failures with configurable retry count
+- 🌐 **Same-Region Optimization**: Uses CopyObject API for same-account, same-region S3 copies to save bandwidth and improve performance
 
 ## Quick Start
 
@@ -185,6 +186,7 @@ All errors are logged with descriptive messages, and internal state is updated t
 3. **Network Selection**: Use endpoints in the same region for better performance
 4. **Memory Usage**: The tool is designed to use minimal memory regardless of file size
 5. **Retry Settings**: Adjust `--max-retries` based on network stability
+6. **Same-Region Copies**: For S3-to-S3 copies within the same account and region, the tool automatically uses CopyObject API which is more efficient and saves bandwidth
 
 ## License
 

@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"github.com/sirupsen/logrus"
 	"os"
+	"path/filepath"
 	"s3copy/copier"
 	"s3copy/utils"
 
@@ -154,6 +155,21 @@ func runS3Copy(cmd *cobra.Command, args []string) {
 		DestType:   "s3",
 		Concurrent: concurrent,
 		PartSize:   partSize,
+	}
+
+	if sourceType == "file" || sourceType == "http" {
+		// 转换为绝对路径
+		absPath, err := filepath.Abs(source)
+		if err != nil {
+			logger.Fatalf("failed to get absolute path for %s: %v", source, err)
+			os.Exit(2)
+		}
+		realPath, err := filepath.EvalSymlinks(absPath)
+		if err != nil {
+			logger.Fatalf("failed to get absolute path for %s: %v", source, err)
+			os.Exit(2)
+		}
+		copyOpt.SourcePath = realPath
 	}
 
 	cp, err := copier.NewCopier(&copyOpt)

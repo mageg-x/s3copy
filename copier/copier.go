@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	source "s3copy/filesource"
 	"s3copy/utils"
 	"strconv"
@@ -47,11 +48,18 @@ var logger = utils.GetLogger("s3copy")
 // NewCopier 创建文件复制器实例
 func NewCopier(opt *CopyOptions) (*Copier, error) {
 	if opt == nil {
-		logger.Fatalf("copy option is required")
+		logger.Errorf("copy option is required")
+		return nil, errors.New("copy option is required")
 	}
 	destConfig, err := source.ParseEndpoint(opt.DestPath, true)
 	if err != nil {
-		logger.Fatalf("failed to parse destination endpoint: %v", err)
+		logger.Errorf("failed to parse destination endpoint: %v", err)
+		return nil, fmt.Errorf("failed to parse dest s3 path %s", opt.DestPath)
+	}
+	logger.Debugf("copy option: %+v, destConfig :%+v", opt, destConfig)
+	if destConfig.Prefix != "" || destConfig.Bucket == "" {
+		logger.Errorf("dest s3 path %d is invalid, must a bucket address ", opt.DestPath)
+		return nil, fmt.Errorf("dest s3 path %d is invalid, must a bucket address ", opt.DestPath)
 	}
 	return &Copier{
 		copyOpt:    opt,
@@ -91,9 +99,13 @@ func (c *Copier) Copy() error {
 
 	// 判断是否同源，可以使用copyObject
 	isSameOrigin := false
-	srcEndPoint, err := source.ParseEndpoint(c.copyOpt.SourcePath, false)
-	if err == nil && srcEndPoint != nil {
-		isSameOrigin = s3cli.CanUseCopyObject(ctx, srcEndPoint, c.destConfig)
+	var srcEndPoint *source.EndpointConfig
+	if c.copyOpt.SourceType == "s3" {
+		ep, err := source.ParseEndpoint(c.copyOpt.SourcePath, false)
+		srcEndPoint = ep
+		if err == nil && srcEndPoint != nil {
+			isSameOrigin = s3cli.CanUseCopyObject(ctx, srcEndPoint, c.destConfig)
+		}
 	}
 
 	// 创建文件源
@@ -145,7 +157,7 @@ func (c *Copier) Copy() error {
 					return // 退出当前 worker
 				default:
 				}
-				logger.Infof(": %+v", f)
+				logger.Debugf("prepare upload file info is: %+v", f)
 				if f.IsDir {
 					continue
 				}
@@ -155,7 +167,7 @@ func (c *Copier) Copy() error {
 					logger.Errorf("failed to get metadata for %s: %v", f.Key, err)
 					continue
 				}
-				logger.Infof("get object meta %v", objMeta)
+				logger.Debugf("get copy option %v object meta %v", c.copyOpt, objMeta)
 
 				// 2. 确定对象大小
 				var objSize int64
@@ -168,11 +180,9 @@ func (c *Copier) Copy() error {
 				switch c.copyOpt.SourceType {
 				case "file":
 					// 假设 sourcePath 是类似 "/data/input/" 或 "/data/input" 的路径
-					prefix := c.copyOpt.SourcePath
-
+					prefix := filepath.Dir(c.copyOpt.SourcePath)
 					// 去掉前缀
 					key = strings.TrimPrefix(key, prefix)
-
 					// 去掉开头和结尾的 '/'，避免出现 "/project/file.txt" 或 "project/file.txt/"
 					key = strings.Trim(key, "/")
 				case "http":
@@ -182,6 +192,8 @@ func (c *Copier) Copy() error {
 						continue
 					}
 				}
+
+				logger.Debugf("get from key %s to key is: %s", f.Key, key)
 
 				var uploadErr error
 				if isSameOrigin {
