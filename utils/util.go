@@ -59,7 +59,7 @@ func Unique[T comparable](slice []T) []T {
 	return result
 }
 
-// normalizeMetadata 将元数据 key 强制转为小写，确保符合 AWS S3 标准
+// NormalizeMetadata normalizeMetadata 将元数据 key 强制转为小写，确保符合 AWS S3 标准
 func NormalizeMetadata(metadata map[string]*string) map[string]*string {
 	if metadata == nil {
 		return nil
@@ -72,7 +72,7 @@ func NormalizeMetadata(metadata map[string]*string) map[string]*string {
 	return normalized
 }
 
-// withRetry 是一个通用的重试包装函数，处理特殊错误和重试逻辑
+// WithRetry withRetry 是一个通用的重试包装函数，处理特殊错误和重试逻辑
 func WithRetry(operation string, maxRetries int, fn func() error) error {
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		err := fn()
@@ -92,7 +92,7 @@ func WithRetry(operation string, maxRetries int, fn func() error) error {
 	return fmt.Errorf("operation %s failed after %d attempts", operation, maxRetries)
 }
 
-// handleSpecialErrors 处理特殊错误类型
+// HandleSpecialErrors handleSpecialErrors 处理特殊错误类型
 func HandleSpecialErrors(err error, operation string) (bool, error) {
 	if err == nil {
 		return false, nil

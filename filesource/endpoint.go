@@ -31,7 +31,7 @@ type EndpointConfig struct {
 	Region    string
 }
 
-// parseEndpoint parses endpoint URL and extracts bucket information
+// ParseEndpoint parseEndpoint parses endpoint URL and extracts bucket information
 // Supports formats:
 // - http://bucket.endpoint.com (virtual hosted-style)
 // - http://endpoint.com/bucket (path-style)

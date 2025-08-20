@@ -72,7 +72,7 @@ Environment Variables:
 	}
 }
 
-func runS3Copy(cmd *cobra.Command, args []string) {
+func runS3Copy(*cobra.Command, []string) {
 	// Validate that exactly one source is specified
 	sourceCount := 0
 	var source, sourceType string

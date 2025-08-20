@@ -85,7 +85,7 @@ func (l *logHandle) Format(e *logrus.Entry) ([]byte, error) {
 	return []byte(str), nil
 }
 
-// for aws.Logger
+// Log for aws.Logger
 func (l *logHandle) Log(args ...interface{}) {
 	l.Debugln(args...)
 }
@@ -134,7 +134,7 @@ func DisableLogColor() {
 	}
 }
 
-// 修改后的 SetOutFile 函数，使用 lumberjack 实现日志轮转
+// SetOutFile 修改后的 SetOutFile 函数，使用 lumberjack 实现日志轮转
 func SetOutFile(name string) {
 	// 创建 lumberjack logger，用于日志轮转
 	logWriter := &lumberjack.Logger{

@@ -58,8 +58,8 @@ func NewCopier(opt *CopyOptions) (*Copier, error) {
 	}
 	logger.Debugf("copy option: %+v, destConfig :%+v", opt, destConfig)
 	if destConfig.Prefix != "" || destConfig.Bucket == "" {
-		logger.Errorf("dest s3 path %d is invalid, must a bucket address ", opt.DestPath)
-		return nil, fmt.Errorf("dest s3 path %d is invalid, must a bucket address ", opt.DestPath)
+		logger.Errorf("dest s3 path %s is invalid, must a bucket address ", opt.DestPath)
+		return nil, fmt.Errorf("dest s3 path %s is invalid, must a bucket address ", opt.DestPath)
 	}
 	return &Copier{
 		copyOpt:    opt,
@@ -229,7 +229,7 @@ func (c *Copier) Copy() error {
 					}
 				}
 				if uploadErr != nil {
-					if ok, _ := utils.HandleSpecialErrors(uploadErr, fmt.Sprint("upload object %s", key)); ok {
+					if ok, _ := utils.HandleSpecialErrors(uploadErr, fmt.Sprintf("upload object %s", key)); ok {
 						// 配额 或者权限 问题，就终止整个复制 任务，没有必要再重试下去
 						cancel()
 					}

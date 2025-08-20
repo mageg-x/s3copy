@@ -237,7 +237,7 @@ func (s *URLSource) GetMetadataByHead(ctx context.Context, path string) (map[str
 	return metadata, nil
 }
 
-// 获取文件总大小
+// GetMetadataByGet 获取文件总大小
 func (s *URLSource) GetMetadataByGet(ctx context.Context, path string) (map[string]string, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", path, nil)
 	if err != nil {

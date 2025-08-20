@@ -40,22 +40,19 @@ import (
 	source "s3copy/filesource"
 )
 
-// 生产者 队列
+// PubData 生产者 队列
 type PubData struct {
 	PartNumber int64
 	Data       []byte
 	ReadError  error // 用于传递读取错误
 }
 
-// 结果队列
+// RetData 结果队列
 type RetData struct {
 	PartNumber int64
 	ETag       string
 	Error      error
 }
-
-// ProgressCallback 是上传进度回调函数类型
-type UlProgressCb func(partNumber int32, totalParts int32, uploadedBytes int64, totalBytes int64)
 
 type S3Cli struct {
 	cfg        *source.EndpointConfig
@@ -65,7 +62,7 @@ type S3Cli struct {
 	s3Client   *s3.S3
 }
 
-// 创建并返回一个新的 S3 客户端
+// Create 创建并返回一个新的 S3 客户端
 func Create(config *source.EndpointConfig, maxRetries, partSize, concurrent int) (*S3Cli, error) {
 	cli := &S3Cli{
 		cfg:        config,
@@ -132,7 +129,7 @@ func (s *S3Cli) IsObjectExist(ctx context.Context, objectPath string, srcEtag st
 	return false, finalEtag, errors.New("etag not match")
 }
 
-// uploadSimple 执行简单上传
+// UploadObject uploadSimple 执行简单上传
 func (s *S3Cli) UploadObject(ctx context.Context, fs source.Source, from, to string, srcmeta map[string]string) error {
 	var srcEtag, dstEtag string
 	if srcmeta != nil {
