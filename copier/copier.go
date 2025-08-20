@@ -17,6 +17,7 @@ package copier
 import (
 	"context"
 	"errors"
+	"fmt"
 	source "s3copy/filesource"
 	"s3copy/utils"
 	"strconv"
@@ -216,7 +217,10 @@ func (c *Copier) Copy() error {
 					}
 				}
 				if uploadErr != nil {
-					//cancel()
+					if ok, _ := utils.HandleSpecialErrors(uploadErr, fmt.Sprint("upload object %s", key)); ok {
+						// 配额 或者权限 问题，就终止整个复制 任务，没有必要再重试下去
+						cancel()
+					}
 				}
 			} // end for taskCh
 		}() // end goroutine

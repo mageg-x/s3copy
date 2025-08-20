@@ -16,8 +16,11 @@ package utils
 
 import (
 	"fmt"
+	"github.com/aws/aws-sdk-go/aws/awserr"
+	"github.com/aws/smithy-go"
 	"net/url"
 	"strings"
+	"time"
 )
 
 var logger = GetLogger("s3copy")
@@ -67,4 +70,65 @@ func NormalizeMetadata(metadata map[string]*string) map[string]*string {
 		normalized[lowerKey] = v
 	}
 	return normalized
+}
+
+// withRetry 是一个通用的重试包装函数，处理特殊错误和重试逻辑
+func WithRetry(operation string, maxRetries int, fn func() error) error {
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		err := fn()
+		if err == nil {
+			return nil
+		}
+
+		// 处理特殊错误
+		if handled, specialErr := HandleSpecialErrors(err, operation); handled {
+			return specialErr
+		}
+
+		logger.Errorf("Operation %s failed (attempt %d/%d): %v", operation, attempt+1, maxRetries, err)
+		time.Sleep(3 * time.Second)
+	}
+
+	return fmt.Errorf("operation %s failed after %d attempts", operation, maxRetries)
+}
+
+// handleSpecialErrors 处理特殊错误类型
+func HandleSpecialErrors(err error, operation string) (bool, error) {
+	if err == nil {
+		return false, nil
+	}
+
+	// 定义特殊错误代码
+	const (
+		ErrCodeAccessDenied  = "AccessDenied"
+		ErrCodeQuotaExceeded = "QuotaExceeded"
+	)
+
+	// 错误信息映射
+	errorMessages := map[string]string{
+		ErrCodeAccessDenied:  "Check IAM permissions and bucket policies.",
+		ErrCodeQuotaExceeded: "Try again later or request quota increase.",
+	}
+
+	// 检查错误类型
+	var errCode string
+
+	// 处理 AWS 错误
+	if aerr, ok := err.(awserr.Error); ok {
+		errCode = aerr.Code()
+	} else if apiErr, ok := err.(smithy.APIError); ok {
+		errCode = apiErr.ErrorCode()
+	} else if strings.Contains(err.Error(), ErrCodeAccessDenied) {
+		errCode = ErrCodeAccessDenied
+	} else if strings.Contains(err.Error(), ErrCodeQuotaExceeded) {
+		errCode = ErrCodeQuotaExceeded
+	}
+
+	// 处理特殊错误
+	if message, ok := errorMessages[errCode]; ok {
+		logger.Errorf("%s during %s: %v. %s", errCode, operation, err, message)
+		return true, fmt.Errorf("%s: %w", errCode, err)
+	}
+
+	return false, nil
 }
