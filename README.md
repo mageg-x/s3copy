@@ -80,6 +80,7 @@ s3copy -from-s3 http://oss1001.region.s4.comm -to http://region.s3.com/oss1001
 | `-T`, `--concurrent` | 并发上传数量 | 10 |
 | `--part-size` | 分块上传大小（字节） | 33554432 (32MB) |
 | `-q`, `--quiet` | 静默模式（无输出） | false |
+| `-v`, `--verbose` | 增加日志详细程度：-v 表示 INFO 级别，-vv 表示 DEBUG 级别，-vvv 表示 TRACE 级别 | 0 |
 | `--max-retries` | 失败上传的重试次数 | 3 |
 
 ### 高级用法示例
@@ -91,7 +92,7 @@ s3copy -from-file /large-dataset \
   -T 20 \
   --part-size 67108864 \
   --max-retries 5 \
-  -q
+  -v
 ```
 
 ## 端点格式支持
@@ -153,6 +154,17 @@ s3copy -from-file /large-dataset \
 ## 重试机制
 
 工具包含智能重试机制，默认情况下会重试失败的上传最多3次，每次间隔3秒。你可以通过`--max-retries`参数自定义重试次数。
+
+## 日志级别控制
+
+工具支持通过`-v`参数控制日志输出详细程度，不同级别的含义如下：
+
+| 参数 | 日志级别 | 含义 |
+|------|----------|------|
+| 不加 `-v` | ERROR/WARN | 只输出错误或警告信息 |
+| `-v` | INFO | 输出主要流程信息（如"开始上传"、"完成下载"） |
+| `-vv` | DEBUG | 输出详细调试信息（如请求头、参数） |
+| `-vvv` | TRACE | 输出最详细信息（如完整请求/响应体、堆栈） |
 
 ## 错误处理
 

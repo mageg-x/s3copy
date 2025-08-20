@@ -88,6 +88,13 @@ func (c *Copier) Copy() error {
 		return errors.New("dst bucket does not exist")
 	}
 
+	// 判断是否同源，可以使用copyObject
+	isSameOrigin := false
+	srcEndPoint, err := source.ParseEndpoint(c.copyOpt.SourcePath, false)
+	if err == nil && srcEndPoint != nil {
+		isSameOrigin = s3cli.CanUseCopyObject(ctx, srcEndPoint, c.destConfig)
+	}
+
 	// 创建文件源
 	srcFS, err := source.NewSource(c.copyOpt.SourceType, c.copyOpt.SourcePath)
 	if err != nil {
@@ -176,6 +183,18 @@ func (c *Copier) Copy() error {
 				}
 
 				var uploadErr error
+				if isSameOrigin {
+					uploadErr = s3cli.CopyObject(ctx, srcEndPoint, f.Key, key, objMeta)
+					if uploadErr != nil {
+						logger.Errorf("failed to copy object %s, %v", key, uploadErr)
+					} else {
+						progress := utils.GetProgress()
+						atomic.AddInt64(&progress.UploadObjects, 1)
+						atomic.AddInt64(&progress.UploadSize, objSize)
+						continue
+					}
+				}
+
 				if objSize > c.copyOpt.PartSize {
 					// 对于大文件使用分块上传
 					uploadErr = s3cli.UploadMultipart(ctx, srcFS, f.Key, key, objMeta)

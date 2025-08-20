@@ -293,6 +293,6 @@ func (s *URLSource) GetMetadataByGet(ctx context.Context, path string) (map[stri
 	metadata["etag"] = etag
 	metadata["last_modified"] = lastModified
 
-	logger.Infof("get file %s meta info %v", path, metadata)
+	logger.Debugf("get file %s meta info %v", path, metadata)
 	return metadata, nil
 }

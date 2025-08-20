@@ -15,6 +15,8 @@
 package main
 
 import (
+	"fmt"
+	"github.com/sirupsen/logrus"
 	"os"
 	"s3copy/copier"
 	"s3copy/utils"
@@ -30,13 +32,13 @@ var (
 	concurrent int
 	partSize   int64
 	quiet      bool
+	verbose    int
 	logger     = utils.GetLogger("s3copy")
 	progress   = utils.GetProgress()
 )
 
 func main() {
 	utils.SetOutput(os.Stdout)
-	//utils.SetLogLevel(logrus.ErrorLevel)
 	var rootCmd = &cobra.Command{
 		Use:   "s3copy",
 		Short: "A powerful S3 copy tool with multipart upload and resume capabilities",
@@ -61,10 +63,11 @@ Environment Variables:
 	rootCmd.Flags().IntVar(&concurrent, "T", 10, "Number of concurrent uploads")
 	rootCmd.Flags().Int64Var(&partSize, "part-size", 32*1024*1024, "Part size for multipart upload (bytes)")
 	rootCmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "quiet mode [Long and short option]")
+	rootCmd.Flags().CountVarP(&verbose, "verbose", "v", "Increase verbosity: -v for INFO, -vv for DEBUG, -vvv for TRACE")
 	rootCmd.MarkFlagRequired("to")
 
 	if err := rootCmd.Execute(); err != nil {
-		logger.Fatal(err)
+		os.Exit(100)
 	}
 }
 
@@ -72,9 +75,48 @@ func runS3Copy(cmd *cobra.Command, args []string) {
 	// Validate that exactly one source is specified
 	sourceCount := 0
 	var source, sourceType string
+
+	// Set log level based on verbose flag
 	if quiet {
 		utils.SetOutFile("/dev/null")
+	} else {
+		switch verbose {
+		case 0:
+			// Default level: ERROR/WARN
+			utils.SetLogLevel(logrus.WarnLevel)
+		case 1:
+			// INFO level
+			utils.SetLogLevel(logrus.InfoLevel)
+		case 2:
+			// DEBUG level
+			utils.SetLogLevel(logrus.DebugLevel)
+		case 3:
+			// TRACE level
+			utils.SetLogLevel(logrus.TraceLevel)
+		default:
+			// More than 3 v's, use TRACE
+			utils.SetLogLevel(logrus.TraceLevel)
+		}
 	}
+
+	// 检查环境变量是否存在
+	if os.Getenv("SRC_ACCESS_KEY") == "" {
+		fmt.Printf("SRC ACCESS KEY can not be empty!")
+		os.Exit(101)
+	}
+	if os.Getenv("SRC_SECRET_KEY") == "" {
+		fmt.Printf("SRC SECRET KEY can not be empty!")
+		os.Exit(102)
+	}
+	if os.Getenv("DST_ACCESS_KEY") == "" {
+		fmt.Printf("DST ACCESS KEY can not be empty!")
+		os.Exit(103)
+	}
+	if os.Getenv("DST_SECRET_KEY") == "" {
+		fmt.Printf("DST SECRET KEY can not be empty!")
+		os.Exit(104)
+	}
+
 	if fromFile != "" {
 		sourceCount++
 		source = fromFile

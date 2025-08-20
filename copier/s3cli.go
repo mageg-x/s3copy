@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/smithy-go"
 	"io"
 	"math"
@@ -89,38 +90,50 @@ func Create(config *source.EndpointConfig, maxRetries, partSize, concurrent int)
 }
 
 func (s *S3Cli) IsObjectExist(ctx context.Context, objectPath string, srcEtag string) (bool, string, error) {
-
 	head, err := s.s3Client.HeadObjectWithContext(ctx, &s3.HeadObjectInput{
 		Bucket: aws.String(s.cfg.Bucket),
 		Key:    aws.String(objectPath),
 	})
 	if err != nil {
-		logger.Infof("failed to check if object exists: %v", err)
-		return false, "", fmt.Errorf("failed to check if object exists: %w", err)
+		if aerr, ok := err.(awserr.Error); ok {
+			if aerr.Code() == s3.ErrCodeNoSuchKey || aerr.Code() == "NotFound" {
+				return false, "", nil
+			}
+		}
+		return false, "", fmt.Errorf("failed to head object: %w", err)
 	}
 
-	dstEtag := ""
-	// 如果对象存在且 ETag 匹配，直接返回成功
-	if head != nil && head.ETag != nil {
-		dstEtag = *head.ETag
+	srcClean := strings.Trim(srcEtag, `"`)
+
+	// 标准化元数据：统一转小写
+	normalizedMeta := utils.NormalizeMetadata(head.Metadata)
+
+	// 1. 检查标准 ETag
+	if head.ETag != nil {
+		dstClean := strings.Trim(*head.ETag, `"`)
+		if dstClean == srcClean {
+			return true, dstClean, nil
+		}
 	}
-	if strings.Trim(srcEtag, `"`) == strings.Trim(dstEtag, `"`) {
-		logger.Infof("object %s already exists with matching etag (%s), skipping upload", objectPath, dstEtag)
-		return true, dstEtag, nil
+
+	// 2. 检查标准化后的元数据
+	if metaEtagPtr, ok := normalizedMeta["etag"]; ok && metaEtagPtr != nil {
+		dstClean := strings.Trim(*metaEtagPtr, `"`)
+		if dstClean == srcClean {
+			return true, dstClean, nil
+		}
 	}
-	logger.Infof("etag %s not matching etag (%s)", srcEtag, head)
-	return false, dstEtag, errors.New("etag not match")
+
+	finalEtag := ""
+	if head.ETag != nil {
+		finalEtag = *head.ETag
+	}
+
+	return false, finalEtag, errors.New("etag not match")
 }
 
 // uploadSimple 执行简单上传
 func (s *S3Cli) UploadObject(ctx context.Context, fs source.Source, from, to string, srcmeta map[string]string) error {
-	reader, _, err := fs.Read(ctx, from, 0)
-	if err != nil {
-		logger.Errorf("failed to read %s: %v", from, err)
-		return fmt.Errorf("failed to open source %s", from)
-	}
-	defer reader.Close()
-
 	var srcEtag, dstEtag string
 	if srcmeta != nil {
 		srcEtag = srcmeta["etag"]
@@ -130,9 +143,17 @@ func (s *S3Cli) UploadObject(ctx context.Context, fs source.Source, from, to str
 		exist, e, err := s.IsObjectExist(ctx, to, srcEtag)
 		dstEtag = e
 		if err == nil && exist {
+			logger.Infof("object %s already exists with matching etag, skipping upload object", to)
 			return nil
 		}
 	}
+
+	reader, _, err := fs.Read(ctx, from, 0)
+	if err != nil {
+		logger.Errorf("failed to read %s: %v", from, err)
+		return fmt.Errorf("failed to open source %s", from)
+	}
+	defer reader.Close()
 
 	// 将流式数据读入内存
 	buf, err := io.ReadAll(reader)
@@ -152,6 +173,7 @@ func (s *S3Cli) UploadObject(ctx context.Context, fs source.Source, from, to str
 
 	exist, dstEtag, err := s.IsObjectExist(ctx, to, srcEtag)
 	if err == nil && exist {
+		logger.Infof("object %s already exists with matching etag, skipping upload object", to)
 		return nil
 	}
 
@@ -304,7 +326,7 @@ func (s *S3Cli) UploadMultipart(ctx context.Context, fs source.Source, from, to 
 					pubWG.Done()
 					<-pubLimiter
 				}()
-				logger.Infof("starting publish worker for reading %s part %d", from, idx)
+				logger.Debugf("starting publish worker for reading %s part %d", from, idx)
 				startByte := (int64(idx) - 1) * partSize
 				endByte := startByte + partSize - 1
 				endByte = min(endByte, srcSize-1)
@@ -326,14 +348,14 @@ func (s *S3Cli) UploadMultipart(ctx context.Context, fs source.Source, from, to 
 						Data:       buffer,
 						ReadError:  nil,
 					}
-					logger.Infof("put %s part %d of %d bytes to pub chan", to, idx, size)
+					logger.Debugf("put %s part %d of %d bytes to pub chan", to, idx, size)
 				} else {
 					logger.Errorf("failed to read %s range data size %d:%d for part %d: %v", from, n, size, idx, err)
 				}
 
 				if readErr != nil {
 					if readErr == io.EOF || readErr == io.ErrUnexpectedEOF {
-						logger.Infof("finished reading %s range data [%d-%d] for part %d", from, startByte, endByte, idx)
+						logger.Debugf("finished reading %s range data [%d-%d] for part %d", from, startByte, endByte, idx)
 						return
 					} else {
 						logger.Errorf("error reading %s range data [%d-%d] for part %d : %v", from, startByte, endByte, idx, readErr)
@@ -371,7 +393,7 @@ func (s *S3Cli) UploadMultipart(ctx context.Context, fs source.Source, from, to 
 					cusWG.Done()
 					<-cusLimiter
 				}()
-				logger.Infof("starting upload %s part %d", to, part.PartNumber)
+				logger.Debugf("starting upload %s part %d", to, part.PartNumber)
 				// 执行上传重试逻辑
 				var etag string
 				var uploadPartErr error
@@ -399,7 +421,7 @@ func (s *S3Cli) UploadMultipart(ctx context.Context, fs source.Source, from, to 
 					}
 				}
 
-				logger.Infof("upload %s for part %d finished", to, part.PartNumber)
+				logger.Debugf("upload %s for part %d finished", to, part.PartNumber)
 			}(p)
 		}
 	}()
@@ -611,6 +633,74 @@ func (s *S3Cli) AbortMultipartUpload(ctx context.Context, bucketName, objectKey,
 	return nil
 }
 
+// CanUseCopyObject 判断是否可以使用CopyObject方法
+func (s *S3Cli) CanUseCopyObject(ctx context.Context, fromEp, toEp *source.EndpointConfig) bool {
+	// 检查是否同源（同一账户和区域）
+	isSameOrigin := fromEp.Region == toEp.Region && fromEp.AccessKey == toEp.AccessKey
+	return isSameOrigin
+}
+
+// CopyObject 复制对象从源路径到目标路径（仅支持同一账户和区域）
+func (s *S3Cli) CopyObject(ctx context.Context, fromEp *source.EndpointConfig, fromKey, toKey string, srcmeta map[string]string) error {
+	// 检查目标对象是否已存在且ETag匹配
+	var srcEtag string
+	if srcmeta != nil {
+		srcEtag = srcmeta["etag"]
+	}
+
+	if srcEtag != "" {
+		exist, _, err := s.IsObjectExist(ctx, toKey, srcEtag)
+		if err == nil && exist {
+			logger.Infof("object %s already exists with matching etag, skipping copy object", toKey)
+			return nil
+		}
+	}
+
+	// 创建复制源路径（格式：bucket/key）
+	copySrc := fmt.Sprintf("%s/%s", fromEp.Bucket, fromKey)
+
+	// 准备复制对象请求
+	params := &s3.CopyObjectInput{
+		Bucket:     aws.String(s.cfg.Bucket),
+		Key:        aws.String(toKey),
+		CopySource: aws.String(copySrc),
+	}
+
+	// 添加元数据
+	if len(srcmeta) > 0 {
+		metadataMap := make(map[string]*string)
+		for key, value := range srcmeta {
+			metadataMap[key] = aws.String(value)
+		}
+		params.Metadata = metadataMap
+		params.MetadataDirective = aws.String("REPLACE")
+	}
+
+	logger.Infof("copying object from %s/%s to %s/%s", fromEp.Bucket, fromKey, s.cfg.Bucket, toKey)
+
+	// 执行复制操作
+	for attempt := 0; attempt < s.MaxRetries; attempt++ {
+		_, err := s.s3Client.CopyObjectWithContext(ctx, params)
+		if err != nil {
+			logger.Errorf("failed to copy object %s/%s to %s/%s: %v (attempt %d/%d)",
+				fromEp.Bucket, fromKey, s.cfg.Bucket, toKey, err, attempt+1, s.MaxRetries)
+
+			// 如果是权限错误，提示可能需要跨账户支持
+			if strings.Contains(err.Error(), "AccessDenied") {
+				logger.Warnf("access denied when copying from %s. If copying across accounts, additional credentials may be required", fromEp.Bucket)
+			}
+		} else {
+			logger.Infof("successfully copied object %s/%s to %s/%s",
+				fromEp.Bucket, fromKey, s.cfg.Bucket, toKey)
+			return nil
+		}
+		time.Sleep(3 * time.Second)
+	}
+
+	return fmt.Errorf("failed to copy object after %d attempts: %s/%s to %s/%s",
+		s.MaxRetries, fromEp.Bucket, fromKey, s.cfg.Bucket, toKey)
+}
+
 // IsUploadIDExist 检查指定的上传ID是否存在
 func (s *S3Cli) IsUploadIDExist(ctx context.Context, bucket, key, uploadID string) (bool, error) {
 	if bucket == "" || key == "" || uploadID == "" {
@@ -721,7 +811,7 @@ func (s *S3Cli) GetIncompleteUploadRanges(ctx context.Context, objectPath string
 	})
 	//应该只有 1或者2种切分长度
 	if len(partSizeList) < 1 || len(partSizeList) > 2 {
-		logger.Infof("failed to continue upload for %s uploadID %s parts %v", objectPath, uploadID, partSizeList)
+		logger.Warning("failed to continue upload for %s uploadID %s parts %v", objectPath, uploadID, partSizeList)
 		return "", 0, nil, fmt.Errorf("failed to continue upload for %s uploadID %s parts %v", objectPath, uploadID, parts)
 	}
 	logger.Infof("successfully retrieved incomplete multipart upload for %s UploadId=%s %d part %v ", objectPath, uploadID, len(parts), partSizeList)
@@ -731,12 +821,12 @@ func (s *S3Cli) GetIncompleteUploadRanges(ctx context.Context, objectPath string
 	totalParts := int64(math.Ceil(float64(objectSize) / float64(partSize)))
 	//校验最后一个分片大小是否正确
 	if totalParts < 2 || (len(partSizeList) > 1 && partSizeList[1] != (objectSize-partSize*(totalParts-1))) {
-		logger.Errorf("part num or part size not match for %s", objectPath)
+		logger.Warning("part num or part size not match for %s", objectPath)
 		return "", 0, nil, fmt.Errorf("part num or part size not match for %s", objectPath)
 	}
 	for _, part := range parts {
 		if *part.PartNumber > totalParts {
-			logger.Errorf("%s part num %d exceed the total part num %d", objectPath, *part.PartNumber, totalParts)
+			logger.Warning("%s part num %d exceed the total part num %d", objectPath, *part.PartNumber, totalParts)
 			return "", 0, nil, fmt.Errorf("%s part num %d exceed the total part num %d", objectPath, *part.PartNumber, totalParts)
 		}
 	}

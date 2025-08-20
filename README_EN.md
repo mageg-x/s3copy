@@ -80,6 +80,7 @@ s3copy -from-s3 http://oss1001.region.s4.comm -to http://region.s3.com/oss1001
 | `-T`, `--concurrent` | Number of concurrent uploads | 10 |
 | `--part-size` | Part size for multipart upload in bytes | 33554432 (32MB) |
 | `-q`, `--quiet` | Quiet mode (no output) | false |
+| `-v`, `--verbose` | Increase verbosity: -v for INFO, -vv for DEBUG, -vvv for TRACE | 0 |
 | `--max-retries` | Number of retries for failed uploads | 3 |
 
 ### Advanced Usage Example
@@ -91,7 +92,7 @@ s3copy -from-file /large-dataset \
   -T 20 \
   --part-size 67108864 \
   --max-retries 5 \
-  -q
+  -v
 ```
 
 ## Endpoint Format Support
@@ -153,6 +154,17 @@ If the destination bucket does not exist, the tool will automatically create it 
 ## Retry Mechanism
 
 The tool includes an intelligent retry mechanism that retries failed uploads up to 3 times by default, with a 3-second delay between attempts. You can customize the number of retries using the `--max-retries` parameter.
+
+## Log Level Control
+
+The tool supports controlling the verbosity of log output via the `-v` parameter. The meanings of different levels are as follows:
+
+| Parameter | Log Level | Description |
+|-----------|-----------|-------------|
+| Without `-v` | ERROR/WARN | Only output errors or warnings |
+| `-v` | INFO | Output main process information (e.g., "Start upload", "Finish download") |
+| `-vv` | DEBUG | Output detailed debugging information (e.g., request headers, parameters) |
+| `-vvv` | TRACE | Output most detailed information (e.g., full request/response bodies, stacks) |
 
 ## Error Handling
 

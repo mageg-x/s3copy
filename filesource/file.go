@@ -61,9 +61,9 @@ func (s *FileSource) List(ctx context.Context, recursive bool) (<-chan ObjectInf
 			errCh <- err
 			return
 		}
-		logger.Infof("lstat %s mode: %v, isSymlink: %v", s.path, info.Mode(), info.Mode()&os.ModeSymlink != 0)
+		logger.Debugf("lstat %s mode: %v, isSymlink: %v", s.path, info.Mode(), info.Mode()&os.ModeSymlink != 0)
 		if info.Mode()&os.ModeSymlink != 0 {
-			logger.Infof("lstat %s is %v", s.path, info)
+			logger.Debugf("lstat %s is %v", s.path, info)
 			return
 		}
 
