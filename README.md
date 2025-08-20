@@ -1,4 +1,4 @@
-中文 | [English](https://github.com/mageg-x/s3copy/blob/main/RREADME_EN.md)
+中文 | [English](https://github.com/mageg-x/s3copy/blob/main/README_EN.md)
 
 # S3Copy Tool
 
