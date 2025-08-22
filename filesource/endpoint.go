@@ -19,16 +19,19 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 )
 
 type EndpointConfig struct {
-	Endpoint  string
-	Bucket    string
-	Prefix    string
-	AccessKey string
-	SecretKey string
-	Region    string
+	Endpoint     string
+	Bucket       string
+	Prefix       string
+	AccessKey    string
+	SecretKey    string
+	Region       string
+	UsePathStyle bool
+	UseSSL       bool
 }
 
 // ParseEndpoint parseEndpoint parses endpoint URL and extracts bucket information
@@ -48,7 +51,8 @@ func ParseEndpoint(endpoint string, isDest bool) (*EndpointConfig, error) {
 	}
 
 	config := &EndpointConfig{
-		Region: "us-east-1", // default region
+		Region: "us-east-1",         // default region
+		UseSSL: u.Scheme == "https", // 根据URL协议设置UseSSL
 	}
 
 	// Get credentials from environment variables
@@ -78,43 +82,62 @@ func ParseEndpoint(endpoint string, isDest bool) (*EndpointConfig, error) {
 		return parsePathStyle(u, config)
 	}
 
-	// Try virtual hosted-style first if valid
-	if isValidVirtualHost(u.Host) {
-		parts := strings.SplitN(u.Host, ".", 2)
-		if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
-			config.Bucket = parts[0]
-			config.Endpoint = fmt.Sprintf("%s://%s", u.Scheme, parts[1])
-			config.Prefix = strings.TrimPrefix(u.Path, "/")
-			return config, nil
-		}
+	// 检查路径是否为空或只有斜杠
+	path := strings.Trim(u.Path, "/")
+	if path == "" {
+		// 路径为空，尝试虚拟托管样式
+		return parseVirtualHostStyle(u, config)
+	}
+
+	// 检查是否是已知云服务商的虚拟托管样式
+	if isKnownVirtualHostStyle(u.Host) {
+		return parseVirtualHostStyle(u, config)
 	}
 
 	// Fall back to path-style parsing
 	return parsePathStyle(u, config)
 }
 
-// isValidVirtualHost checks if host is valid for virtual hosted-style
-func isValidVirtualHost(host string) bool {
-	if strings.Count(host, ".") < 1 {
-		return false // No dots, can't split bucket
+// isVirtualHostStyle 检查是否是已知云服务商的虚拟托管样式
+func isKnownVirtualHostStyle(host string) bool {
+	// 移除端口部分（如果有）
+	hostname := strings.Split(host, ":")[0]
+
+	// AWS S3 虚拟托管样式模式
+	// bucket.s3.region.amazonaws.com 或 bucket.s3.amazonaws.com
+	awsPattern := regexp.MustCompile(`^[^.]+\.s3(?:[.-][^.]+)?\.amazonaws\.com$`)
+	if awsPattern.MatchString(hostname) {
+		return true
 	}
-	// Check for valid domain structure (avoid over-splitting IP-like formats)
-	parts := strings.Split(host, ".")
-	if len(parts) < 2 {
-		logger.Errorf("invalid virtual host")
-		return false
+
+	// 阿里云 OSS 虚拟托管样式模式
+	// bucket.oss-region.aliyuncs.com
+	aliyunPattern := regexp.MustCompile(`^[^.]+\.oss-[^.]+\.aliyuncs\.com$`)
+	if aliyunPattern.MatchString(hostname) {
+		return true
 	}
-	// Last part should be TLD (at least 2 characters)
-	if len(parts[len(parts)-1]) < 2 {
-		logger.Errorf("invalid virtual host")
-		return false
+
+	// 腾讯云 COS 虚拟托管样式模式
+	// bucket.cos.region.myqcloud.com
+	tencentPattern := regexp.MustCompile(`^[^.]+\.cos\.[^.]+\.myqcloud\.com$`)
+	if tencentPattern.MatchString(hostname) {
+		return true
 	}
-	return true
+
+	// 七牛云 Kodo 虚拟托管样式模式
+	// bucket.s3-region.qiniucs.com
+	qiniuPattern := regexp.MustCompile(`^[^.]+\.s3-[^.]+\.qiniucs\.com$`)
+	if qiniuPattern.MatchString(hostname) {
+		return true
+	}
+
+	return false
 }
 
 // parsePathStyle handles path-style URLs (bucket in path)
 func parsePathStyle(u *url.URL, config *EndpointConfig) (*EndpointConfig, error) {
 	config.Endpoint = fmt.Sprintf("%s://%s", u.Scheme, u.Host)
+	config.UsePathStyle = true
 
 	// Trim leading/trailing slashes and split path
 	trimmedPath := strings.Trim(u.Path, "/")
@@ -129,5 +152,20 @@ func parsePathStyle(u *url.URL, config *EndpointConfig) (*EndpointConfig, error)
 	if len(parts) > 1 {
 		config.Prefix = parts[1]
 	}
+	return config, nil
+}
+
+// parseVirtualHostStyle 处理虚拟托管样式URL
+func parseVirtualHostStyle(u *url.URL, config *EndpointConfig) (*EndpointConfig, error) {
+	// 使用第一个点分割主机名
+	parts := strings.SplitN(u.Host, ".", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return nil, fmt.Errorf("invalid virtual host style URL: %s", u.String())
+	}
+
+	config.Bucket = parts[0]
+	config.Endpoint = fmt.Sprintf("%s://%s", u.Scheme, parts[1])
+	config.Prefix = strings.TrimPrefix(u.Path, "/")
+	config.UsePathStyle = false
 	return config, nil
 }

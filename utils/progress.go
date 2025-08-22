@@ -28,6 +28,8 @@ type Progress struct {
 	DownloadSize  int64
 	UploadSize    int64
 	UploadObjects int64
+	SkipSize      int64
+	SkipObjects   int64
 	FailObjects   int64
 	StartTime     time.Time
 }
@@ -48,14 +50,15 @@ func (p *Progress) Report(result string) {
 	now := time.Since(p.StartTime).Seconds()
 	if now > 0 {
 		total := atomic.LoadInt64(&p.TotalSize)
-		upload := atomic.LoadInt64(&p.UploadSize)
-
 		total_objects := atomic.LoadInt64(&p.TotalObjects)
+		upload := atomic.LoadInt64(&p.UploadSize)
 		upload_objects := atomic.LoadInt64(&p.UploadObjects)
+		skip := atomic.LoadInt64(&p.SkipSize)
+		skip_objects := atomic.LoadInt64(&p.SkipObjects)
 		fail_objects := atomic.LoadInt64(&p.FailObjects)
 		avg_speed := int64(float64(upload) / now)
-		progress1 := upload * 100 / max(total, 1)
-		progress2 := upload_objects * 100 / max(total_objects, 1)
+		progress1 := (upload + skip) * 100 / max(total, 1)
+		progress2 := (upload_objects + skip_objects) * 100 / max(total_objects, 1)
 		percent := min(progress1, progress2)
 
 		line := fmt.Sprintf(`{"total_size":%d,"migrated_size":%d,"total_objects":%d, "migrated_objects":%d, "fail_objects":%d, "average_speed":%d,"progress":%d}`,

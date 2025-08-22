@@ -61,14 +61,14 @@ func Unique[T comparable](slice []T) []T {
 }
 
 // NormalizeMetadata normalizeMetadata 将元数据 key 强制转为小写，确保符合 AWS S3 标准
-func NormalizeMetadata(metadata map[string]*string) map[string]*string {
+func NormalizeMetadata(metadata map[string]string) map[string]*string {
 	if metadata == nil {
 		return nil
 	}
 	normalized := make(map[string]*string, len(metadata))
 	for k, v := range metadata {
 		lowerKey := strings.ToLower(k)
-		normalized[lowerKey] = v
+		normalized[lowerKey] = &v
 	}
 	return normalized
 }
