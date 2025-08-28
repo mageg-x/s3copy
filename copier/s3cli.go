@@ -107,6 +107,7 @@ func Create(config *source.EndpointConfig, maxRetries, partSize, concurrent int)
 		// 对接 MinIO/OSS/COS 等需要PathStyle的情况
 		logger.Debugf("Enabling path-style access")
 		o.UsePathStyle = config.UsePathStyle
+		o.Logger = utils.NullLogger{}
 	})
 
 	cli.s3Client = client

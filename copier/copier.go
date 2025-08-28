@@ -21,10 +21,10 @@ import (
 	"path/filepath"
 	source "s3copy/filesource"
 	"s3copy/utils"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
-	"time"
 )
 
 // Copier 处理从文件源到S3的复制
@@ -80,69 +80,48 @@ func (c *Copier) Stat(src source.Source) {
 }
 
 func (c *Copier) Copy() error {
-	logger.Infof("Starting copy operation: source=%s (%s) to %s (%s)",
-		c.copyOpt.SourcePath, c.copyOpt.SourceType,
-		c.copyOpt.DestPath, c.copyOpt.DestType)
-	startTime := time.Now()
-
 	// 打开上传
-	logger.Debugf("Creating S3 client with partSize=%d, concurrent=%d", c.copyOpt.PartSize, c.copyOpt.Concurrent)
 	s3cli, err := Create(c.destConfig, 3, int(c.copyOpt.PartSize), c.copyOpt.Concurrent)
 	if err != nil {
-		logger.Errorf("Failed to create S3 client: %v", err)
+		logger.Errorf("failed to create s3 client: %v", err)
 		return err
 	}
-	logger.Infof("S3 client created successfully")
-
 	// --- 使用 context 控制取消 ---
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel() // 确保在 Copy 函数结束时取消 context
-	logger.Debugf("Created context with cancellation support")
 
 	// 如果目标bucket不存在就创建
-	logger.Debugf("Checking if destination bucket exists: %s", c.destConfig.Bucket)
 	if ok, err := s3cli.IsBucketExist(ctx, c.destConfig.Bucket); err != nil || !ok {
-		logger.Infof("Destination bucket does not exist, creating: %s", c.destConfig.Bucket)
 		_ = s3cli.CreateBucket(ctx, c.destConfig.Bucket)
 	}
 
 	if ok, err := s3cli.IsBucketExist(ctx, c.destConfig.Bucket); err != nil || !ok {
-		logger.Errorf("Failed to create destination bucket: %s", c.destConfig.Bucket)
+		logger.Errorf("dst bucket does not exist")
 		return errors.New("dst bucket does not exist")
 	}
-	logger.Infof("Destination bucket is ready: %s", c.destConfig.Bucket)
 
 	// 判断是否同源，可以使用copyObject
 	isSameOrigin := false
 	var srcEndPoint *source.EndpointConfig
 	if c.copyOpt.SourceType == "s3" {
-		logger.Debugf("Source is S3, checking if same origin")
 		ep, err := source.ParseEndpoint(c.copyOpt.SourcePath, false)
 		srcEndPoint = ep
 		if err == nil && srcEndPoint != nil {
 			isSameOrigin = s3cli.CanUseCopyObject(ctx, srcEndPoint, c.destConfig)
-			logger.Infof("Same origin check result: %v", isSameOrigin)
-		} else {
-			logger.Errorf("Failed to parse source endpoint: %v", err)
 		}
 	}
 
 	// 创建文件源
-	logger.Infof("Creating source of type: %s, path: %s", c.copyOpt.SourceType, c.copyOpt.SourcePath)
 	srcFS, err := source.NewSource(c.copyOpt.SourceType, c.copyOpt.SourcePath)
 	if err != nil {
-		logger.Fatalf("Failed to create source: %v", err)
+		logger.Fatalf("failed to create source: %v", err)
 	}
-	logger.Infof("Source created successfully")
 
 	// 为了统计需要，要知道文件总个数和总大小
-	logger.Debugf("Starting file statistics collection")
 	go c.Stat(srcFS)
-	logger.Debugf("Starting progress reporter")
 	go utils.StartProgressReporter(context.Background(), utils.GetProgress())
 
 	// 获取文件列表
-	logger.Infof("Listing files from source")
 	fileCh, errCh := srcFS.List(ctx, true)
 
 	// --- 主协程：监听 errCh ---
@@ -150,11 +129,10 @@ func (c *Copier) Copy() error {
 		select {
 		case err := <-errCh:
 			if err != nil {
-				logger.Errorf("Failed to list files: %v", err)
+				logger.Errorf("遍历文件失败: %v", err)
 				cancel()
 			}
 		case <-ctx.Done(): // 如果主 context 已结束，就不处理了
-			logger.Infof("Context cancelled, stopping error listener")
 			return
 		}
 	}()
@@ -164,48 +142,44 @@ func (c *Copier) Copy() error {
 	if c.copyOpt.Concurrent > 0 {
 		concurrency = c.copyOpt.Concurrent
 	}
-	logger.Infof("Setting concurrency level to: %d", concurrency)
 
 	// 创建任务通道
-	logger.Debugf("Creating task channel with buffer size: 100")
 	taskCh := make(chan source.ObjectInfo, 100)
 	var wg sync.WaitGroup
 
 	// 消费者goroutine
-	logger.Infof("Starting %d worker goroutines", concurrency)
 	for i := 0; i < concurrency; i++ {
 		wg.Add(1)
-		go func(workerID int) {
+		go func() {
 			defer wg.Done()
-			logger.Debugf("Worker %d started", workerID)
 			for f := range taskCh {
 				// 检查 context 是否已取消（由其他 worker 或主协程触发）
 				select {
 				case <-ctx.Done():
-					logger.Infof("Worker %d: context cancelled, stopping worker.", workerID)
+					logger.Infof("[worker] context cancelled, stopping worker.")
 					return // 退出当前 worker
 				default:
 				}
-				logger.Debugf("Worker %d: preparing to upload file: %s", workerID, f.Key)
-				logger.Tracef("Worker %d: file info: %+v", workerID, f)
+				logger.Debugf("prepare upload file info is: %+v", f)
 				if f.IsDir {
-					logger.Debugf("Worker %d: skipping directory: %s", workerID, f.Key)
 					continue
 				}
 				// 1. 获取对象元数据
-				logger.Infof("Worker %d: getting metadata for: %s", workerID, f.Key)
 				objMeta, err := srcFS.GetMetadata(ctx, f.Key)
 				if err != nil {
-					logger.Errorf("Worker %d: failed to get metadata for %s: %v", workerID, f.Key, err)
+					logger.Errorf("failed to get metadata for %s: %v", f.Key, err)
 					continue
 				}
-				logger.Debugf("Worker %d: got metadata for %s: %v", workerID, f.Key, objMeta)
+				logger.Debugf("get copy option %v object meta %v", c.copyOpt, objMeta)
 
 				// 2. 确定对象大小
-				objSize := f.Size
-				// 处理目标key
+				var objSize int64
+				sizeStr, ok := objMeta["size"]
+				if ok {
+					objSize, _ = strconv.ParseInt(sizeStr, 10, 64)
+				}
+
 				key := f.Key
-				logger.Debugf("Worker %d: original key: %s", workerID, key)
 				switch c.copyOpt.SourceType {
 				case "file":
 					// 假设 sourcePath 是类似 "/data/input/" 或 "/data/input" 的路径
@@ -214,94 +188,72 @@ func (c *Copier) Copy() error {
 					key = strings.TrimPrefix(key, prefix)
 					// 去掉开头和结尾的 '/'，避免出现 "/project/file.txt" 或 "project/file.txt/"
 					key = strings.Trim(key, "/")
-					logger.Debugf("Worker %d: processed file key: %s", workerID, key)
 				case "http":
-					logger.Debugf("Worker %d: getting file name from URL: %s", workerID, c.copyOpt.SourcePath)
 					key, err = utils.GetFileNameFromURL(c.copyOpt.SourcePath)
 					if err != nil {
-						logger.Errorf("Worker %d: failed to get file name from URL: %v", workerID, err)
+						logger.Errorf("failed to get file name from url: %v", err)
 						continue
 					}
-					logger.Debugf("Worker %d: processed HTTP key: %s", workerID, key)
-				default:
-					logger.Debugf("Worker %d: using original key for source type: %s", workerID, c.copyOpt.SourceType)
 				}
 
-				logger.Infof("Worker %d: copying from %s to %s object size %d", workerID, f.Key, key, objSize)
+				logger.Debugf("get from key %s to key is: %s", f.Key, key)
 				progress := utils.GetProgress()
 				var uploadErr error
 				var skip bool
 				if isSameOrigin {
-					logger.Infof("Worker %d: same origin detected, using CopyObject for %s", workerID, key)
 					skip, uploadErr = s3cli.CopyObject(ctx, srcEndPoint, f.Key, key, objMeta)
 					if uploadErr != nil {
 						atomic.AddInt64(&progress.FailObjects, 1)
-						logger.Errorf("Worker %d: failed to copy object %s: %v", workerID, key, uploadErr)
+						logger.Errorf("failed to copy object %s, %v", key, uploadErr)
 					} else {
 						if !skip {
 							atomic.AddInt64(&progress.UploadObjects, 1)
 							atomic.AddInt64(&progress.UploadSize, objSize)
-							logger.Infof("Worker %d: successfully copied object: %s", workerID, key)
 						} else {
 							atomic.AddInt64(&progress.SkipObjects, 1)
 							atomic.AddInt64(&progress.SkipSize, objSize)
-							logger.Infof("Worker %d: skipped copying object (already exists): %s", workerID, key)
 						}
 						continue
 					}
-				} else {
-					logger.Infof("Worker %d: different origins, will upload directly for %s", workerID, key)
 				}
 
-				// 选择上传策略
 				if objSize > c.copyOpt.PartSize {
-					logger.Infof("Worker %d: object size %d exceeds part size %d, using multipart upload for %s",
-						workerID, objSize, c.copyOpt.PartSize, key)
 					// 对于大文件使用分块上传
 					skip, uploadErr = s3cli.UploadMultipart(ctx, srcFS, f.Key, key, objMeta)
 					if uploadErr != nil {
 						atomic.AddInt64(&progress.FailObjects, 1)
-						logger.Errorf("Worker %d: failed to multipart upload %s: %v", workerID, key, uploadErr)
+						logger.Errorf("failed to multiupload %s, %v", key, uploadErr)
 					} else {
 						if !skip {
 							atomic.AddInt64(&progress.UploadObjects, 1)
-							logger.Infof("Worker %d: successfully completed multipart upload: %s", workerID, key)
 						} else {
 							atomic.AddInt64(&progress.SkipObjects, 1)
-							logger.Infof("Worker %d: skipped multipart upload (already exists): %s", workerID, key)
 						}
 					}
 				} else {
-					logger.Infof("Worker %d: object size %d is within part size %d, using simple upload for %s",
-						workerID, objSize, c.copyOpt.PartSize, key)
 					// 简单上传
 					skip, uploadErr = s3cli.UploadObject(ctx, srcFS, f.Key, key, objMeta)
 					if uploadErr != nil {
 						atomic.AddInt64(&progress.FailObjects, 1)
-						logger.Errorf("Worker %d: failed to upload %s: %v", workerID, key, uploadErr)
+						logger.Errorf("failed to upload %s, %v", key, uploadErr)
 					} else {
 						if !skip {
 							atomic.AddInt64(&progress.UploadObjects, 1)
 							atomic.AddInt64(&progress.UploadSize, objSize)
-							logger.Infof("Worker %d: successfully uploaded: %s", workerID, key)
 						} else {
 							atomic.AddInt64(&progress.SkipObjects, 1)
 							atomic.AddInt64(&progress.SkipSize, objSize)
-							logger.Infof("Worker %d: skipped upload (already exists): %s", workerID, key)
 						}
 					}
 				}
-				// 处理上传错误
 				if uploadErr != nil {
-					logger.Debugf("Worker %d: handling error for upload: %s", workerID, key)
 					if ok, _ := utils.HandleSpecialErrors(uploadErr, fmt.Sprintf("upload object %s", key)); ok {
 						// 配额 或者权限 问题，就终止整个复制 任务，没有必要再重试下去
-						logger.Errorf("Worker %d: critical error during upload, cancelling all tasks: %v", workerID, uploadErr)
 						cancel()
 					}
 				}
 			} // end for taskCh
-		}(i) // end goroutine
+		}() // end goroutine
 	} // end worker loop
 
 	// --- 主协程：发送任务 ---
@@ -320,21 +272,6 @@ func (c *Copier) Copy() error {
 
 	// 等待所有工作goroutine完成
 	wg.Wait()
-
-	// 记录总执行时间和统计信息
-	duration := time.Since(startTime)
-	progress := utils.GetProgress()
-
-	logger.Infof("Copy operation completed in %v", duration)
-	logger.Infof("Statistics:")
-	logger.Infof("  - Successfully uploaded: %d files (%d)", progress.UploadObjects, progress.UploadSize)
-	logger.Infof("  - Skipped (already exists): %d files (%d)", progress.SkipObjects, progress.SkipSize)
-	logger.Infof("  - Failed: %d files", progress.FailObjects)
-	logger.Infof("  - Total processed: %d files", progress.UploadObjects+progress.SkipObjects+progress.FailObjects)
-
-	if progress.FailObjects > 0 {
-		logger.Warningf("Some files failed to copy. Check previous error logs for details.")
-	}
 
 	return nil
 }

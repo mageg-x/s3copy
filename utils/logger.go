@@ -16,6 +16,7 @@ package utils
 
 import (
 	"fmt"
+	"github.com/aws/smithy-go/logging"
 	"io"
 	"os"
 	"path"
@@ -33,6 +34,13 @@ var (
 	loggers         = make(map[string]*logHandle)
 	mu              sync.Mutex
 )
+
+// 定义空日志记录器
+type NullLogger struct{}
+
+func (l NullLogger) Logf(classification logging.Classification, format string, v ...interface{}) {
+	//TODO implement me
+}
 
 type logHandle struct {
 	logrus.Logger

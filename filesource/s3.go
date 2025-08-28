@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"s3copy/utils"
 	"strconv"
 	"strings"
 
@@ -65,6 +66,7 @@ func NewS3Source(source string) (*S3Source, error) {
 			o.BaseEndpoint = aws.String(config.Endpoint)
 		}
 		o.UsePathStyle = config.UsePathStyle
+		o.Logger = utils.NullLogger{}
 	})
 
 	// 测试数据源是否可达
