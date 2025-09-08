@@ -39,6 +39,8 @@ func NewS3Source(source string) (*S3Source, error) {
 	config, err := ParseEndpoint(source, false)
 	if err != nil {
 		logger.Fatalf("failed to parse source endpoint: %v", err)
+	} else {
+		logger.Infof("source config : %#v", config)
 	}
 
 	// 创建 AWS 配置

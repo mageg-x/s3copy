@@ -167,5 +167,37 @@ func parseVirtualHostStyle(u *url.URL, config *EndpointConfig) (*EndpointConfig,
 	config.Endpoint = fmt.Sprintf("%s://%s", u.Scheme, parts[1])
 	config.Prefix = strings.TrimPrefix(u.Path, "/")
 	config.UsePathStyle = false
+	if region, err := extractRegionFromHost(parts[1]); err == nil && region != "" {
+		config.Region = region
+	}
 	return config, nil
+}
+
+var (
+	aliyunOSSPattern  = regexp.MustCompile(`^oss-([a-z0-9-]+)\.aliyuncs\.com$`)
+	awsS3Pattern      = regexp.MustCompile(`^s3\.([a-z0-9-]+)\.amazonaws\.com(\.cn)?$`)
+	huaweiOBSPattern  = regexp.MustCompile(`^obs\.([a-z0-9-]+)\.myhuaweicloud\.com$`)
+	tencentCOSPattern = regexp.MustCompile(`^cos\.([a-z0-9-]+)\.myqcloud\.com$`)
+	qiniuKodoPattern  = regexp.MustCompile(`^s3-([a-z0-9-]+)\.qiniucs\.com$`)
+)
+
+func extractRegionFromHost(host string) (string, error) {
+	logger.Infof("host is %s", host)
+	if match := aliyunOSSPattern.FindStringSubmatch(host); match != nil {
+		return match[1], nil
+	}
+	if match := awsS3Pattern.FindStringSubmatch(host); match != nil {
+		return match[1], nil
+	}
+	if match := huaweiOBSPattern.FindStringSubmatch(host); match != nil {
+		return match[1], nil
+	}
+	if match := tencentCOSPattern.FindStringSubmatch(host); match != nil {
+		return match[1], nil
+	}
+	if match := qiniuKodoPattern.FindStringSubmatch(host); match != nil {
+		return match[1], nil
+	}
+	logger.Errorf("cannot extract region from host: %s", host)
+	return "", fmt.Errorf("cannot extract region from host: %s", host)
 }
