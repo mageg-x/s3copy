@@ -160,7 +160,7 @@ func (c *Copier) Copy() error {
 					return // 退出当前 worker
 				default:
 				}
-				logger.Debugf("prepare upload file info is: %+v", f)
+				logger.Debugf("prepare upload file info is: %#v", f)
 				if f.IsDir {
 					continue
 				}

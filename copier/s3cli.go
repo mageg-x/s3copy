@@ -62,7 +62,7 @@ type S3Cli struct {
 
 // Create 创建并返回一个新的 S3 客户端
 func Create(config *source.EndpointConfig, maxRetries, partSize, concurrent int) (*S3Cli, error) {
-	logger.Infof("Creating S3 client with config: bucket=%s, region=%s, endpoint=%s", config.Bucket, config.Region, config.Endpoint)
+	logger.Debugf("Creating S3 client with config: bucket=%#v", config)
 	startTime := time.Now()
 
 	cli := &S3Cli{
@@ -87,10 +87,13 @@ func Create(config *source.EndpointConfig, maxRetries, partSize, concurrent int)
 
 	// 加载配置，并指定凭证提供者
 	logger.Debugf("Loading AWS SDK configuration with region: %s", config.Region)
+
 	cfg, err := awsconf.LoadDefaultConfig(ctx,
 		awsconf.WithRegion(config.Region),
 		awsconf.WithCredentialsProvider(credentialProvider),
+		awsconf.WithRequestChecksumCalculation(aws.RequestChecksumCalculationWhenRequired),
 	)
+
 	if err != nil {
 		logger.Errorf("Failed to load SDK configuration: %v", err)
 		return nil, fmt.Errorf("failed to load SDK configuration: %w", err)
@@ -105,9 +108,10 @@ func Create(config *source.EndpointConfig, maxRetries, partSize, concurrent int)
 			o.BaseEndpoint = aws.String(config.Endpoint)
 		}
 		// 对接 MinIO/OSS/COS 等需要PathStyle的情况
-		logger.Debugf("Enabling path-style access")
+		logger.Debugf("Enabling path-style access %v", config.UsePathStyle)
 		o.UsePathStyle = config.UsePathStyle
 		o.Logger = utils.NullLogger{}
+		o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
 	})
 
 	cli.s3Client = client
@@ -232,9 +236,10 @@ func (s *S3Cli) UploadObject(ctx context.Context, fs source.Source, from, to str
 
 	logger.Debugf("Preparing to upload object: %s/%s", s.cfg.Bucket, to)
 	params := &s3.PutObjectInput{
-		Bucket: aws.String(s.cfg.Bucket),
-		Key:    aws.String(to),
-		Body:   bytes.NewReader(buf), // ✅ *bytes.Reader 实现了 io.ReadSeeker
+		Bucket:        aws.String(s.cfg.Bucket),
+		Key:           aws.String(to),
+		Body:          bytes.NewReader(buf),
+		ContentLength: aws.Int64(int64(len(buf))),
 	}
 
 	// 添加元数据
@@ -301,7 +306,7 @@ func (s *S3Cli) UploadMultipart(ctx context.Context, fs source.Source, from, to 
 		Bucket: aws.String(s.cfg.Bucket),
 		Key:    aws.String(to),
 	})
-	logger.Debugf("HeadObject response for %s: %+v", to, head)
+	logger.Debugf("HeadObject response for %s: %#v size  %d", to, head, srcSize)
 	// 检查目标对象是否已存在且大小匹配
 	if head != nil && head.ContentLength != nil && *(head.ContentLength) == srcSize {
 		atomic.AddInt64(&utils.GetProgress().SkipSize, srcSize)
@@ -537,7 +542,7 @@ func (s *S3Cli) UploadMultipart(ctx context.Context, fs source.Source, from, to 
 					}
 				}
 
-				logger.Infof("Worker %d: Finished processing part %d of %s", workerID, part.PartNumber, to)
+				logger.Infof("Worker %d: Finished processing part %d size :%d of %s", workerID, part.PartNumber, len(part.Data), to)
 			}(p, currentWorkerID)
 		}
 		logger.Infof("Consumer loop completed - no more parts to process")
@@ -592,7 +597,7 @@ func (s *S3Cli) UploadMultipart(ctx context.Context, fs source.Source, from, to 
 	logger.Infof("successfully completed multipart upload for %s with %d parts", to, len(partETags))
 	logger.Infof("Successfully uploaded %s to %s", from, to)
 	uploadID = "" // 防止 defer 中执行 Abort
-	return true, nil
+	return false, nil
 }
 
 func (s *S3Cli) HeadMultipartUpload(ctx context.Context, objectPath string) (*types.MultipartUpload, error) {
@@ -679,7 +684,7 @@ func (s *S3Cli) InitPart(ctx context.Context, bucketName, objectKey string) (str
 		Bucket: aws.String(bucketName),
 		Key:    aws.String(objectKey),
 	})
-	if err != nil {
+	if err != nil || resp == nil || resp.UploadId == nil {
 		return "", fmt.Errorf("failed to init multipart upload: %w", err)
 	}
 
@@ -696,11 +701,12 @@ func (s *S3Cli) UploadPart(ctx context.Context, bucketName, objectKey, uploadID 
 	logger.Infof("start uploading %d bytes to part %d of %s/%s", len(data), partNumber, bucketName, objectKey)
 
 	resp, err := s.s3Client.UploadPart(ctx, &s3.UploadPartInput{
-		Bucket:     aws.String(bucketName),
-		Key:        aws.String(objectKey),
-		PartNumber: aws.Int32(int32(partNumber)),
-		Body:       bytes.NewReader(data),
-		UploadId:   aws.String(uploadID),
+		Bucket:        aws.String(bucketName),
+		Key:           aws.String(objectKey),
+		PartNumber:    aws.Int32(int32(partNumber)),
+		Body:          bytes.NewReader(data),
+		UploadId:      aws.String(uploadID),
+		ContentLength: aws.Int64(int64(len(data))), // 明确设置内容长度
 	})
 	if err != nil {
 		logger.Errorf("upload part %d of %s/%s failed: %s", partNumber, bucketName, objectKey, err)

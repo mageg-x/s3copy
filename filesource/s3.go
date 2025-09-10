@@ -271,7 +271,7 @@ func (s *S3Source) GetMetadata(ctx context.Context, path string) (map[string]str
 		logger.Errorf("failed to head s3 object for metadata: %v", err)
 		return nil, err
 	}
-
+	logger.Debugf("successfully get metadata for %s  is %#v", path, resp)
 	// 提取元数据
 	metadata := make(map[string]string)
 
